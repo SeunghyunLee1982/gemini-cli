@@ -295,7 +295,7 @@ describe('memoryDiscovery', () => {
       expect(result[0]).toBe(repoFile);
     });
 
-    it('should preserve case-distinct files before identity deduplication', async () => {
+    it('should return first matching filename in chain (override semantics)', async () => {
       const platformSpy = vi
         .spyOn(process, 'platform', 'get')
         .mockReturnValue('win32');
@@ -328,10 +328,9 @@ describe('memoryDiscovery', () => {
           [],
         );
 
-        expect(result).toEqual([
-          paths.toAbsolutePath('/case-root/GEMINI.md'),
-          paths.toAbsolutePath('/case-root/gemini.md'),
-        ]);
+        // Override semantics: only the first matching filename in chain
+        // order is returned per directory.
+        expect(result).toEqual([paths.toAbsolutePath('/case-root/GEMINI.md')]);
       } finally {
         platformSpy.mockRestore();
         vi.doUnmock('node:fs/promises');
@@ -367,8 +366,8 @@ describe('memoryDiscovery', () => {
       expect(result).toContain(srcFile);
     });
 
-    it('should keep multiple memory files from the same directory adjacent and in order', async () => {
-      // Configure multiple memory filenames
+    it('should pick only the first matching filename in chain (override)', async () => {
+      // Configure multiple memory filenames as a fallback chain.
       setGeminiMdFilename(['PRIMARY.md', 'SECONDARY.md']);
 
       const dir = await createEmptyDir(
@@ -380,19 +379,13 @@ describe('memoryDiscovery', () => {
         path.join(dir, 'PRIMARY.md'),
         'Primary content',
       );
-      const secondaryFile = await createTestFile(
-        path.join(dir, 'SECONDARY.md'),
-        'Secondary content',
-      );
+      await createTestFile(path.join(dir, 'SECONDARY.md'), 'Secondary content');
 
       const result = await getEnvironmentMemoryPaths([dir]);
 
-      expect(result).toHaveLength(2);
-      // Verify order: PRIMARY should come before SECONDARY because they are
-      // sorted by path and PRIMARY.md comes before SECONDARY.md alphabetically
-      // if in same dir.
+      // Override semantics: PRIMARY wins; SECONDARY ignored at the same level.
+      expect(result).toHaveLength(1);
       expect(result[0]).toBe(primaryFile);
-      expect(result[1]).toBe(secondaryFile);
     });
   });
 

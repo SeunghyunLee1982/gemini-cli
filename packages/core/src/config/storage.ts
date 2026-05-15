@@ -24,6 +24,7 @@ export const TRUSTED_FOLDERS_FILENAME = 'trustedFolders.json';
 const TMP_DIR_NAME = 'tmp';
 const BIN_DIR_NAME = 'bin';
 const AGENTS_DIR_NAME = '.agents';
+const CLAUDE_DIR_NAME = '.claude';
 
 export const AUTO_SAVED_POLICY_FILENAME = 'auto-saved.toml';
 
@@ -67,6 +68,14 @@ export class Storage {
     return path.join(homeDir, AGENTS_DIR_NAME);
   }
 
+  static getGlobalClaudeDir(): string {
+    const homeDir = homedir();
+    if (!homeDir) {
+      return '';
+    }
+    return path.join(homeDir, CLAUDE_DIR_NAME);
+  }
+
   static getMcpOAuthTokensPath(): string {
     return path.join(Storage.getGlobalGeminiDir(), 'mcp-oauth-tokens.json');
   }
@@ -104,6 +113,14 @@ export class Storage {
 
   static getUserAgentSkillsDir(): string {
     return path.join(Storage.getGlobalAgentsDir(), 'skills');
+  }
+
+  static getUserClaudeSkillsDir(): string {
+    return path.join(Storage.getGlobalClaudeDir(), 'skills');
+  }
+
+  static getUserClaudeAgentsDir(): string {
+    return path.join(Storage.getGlobalClaudeDir(), 'agents');
   }
 
   static getUserPoliciesDir(): string {
@@ -176,6 +193,10 @@ export class Storage {
 
   getAgentsDir(): string {
     return path.join(this.targetDir, AGENTS_DIR_NAME);
+  }
+
+  getClaudeDir(): string {
+    return path.join(this.targetDir, CLAUDE_DIR_NAME);
   }
 
   getProjectTempDir(): string {
@@ -304,6 +325,14 @@ export class Storage {
 
   getProjectAgentSkillsDir(): string {
     return path.join(this.getAgentsDir(), 'skills');
+  }
+
+  getProjectClaudeSkillsDir(): string {
+    return path.join(this.getClaudeDir(), 'skills');
+  }
+
+  getProjectClaudeAgentsDir(): string {
+    return path.join(this.getClaudeDir(), 'agents');
   }
 
   getProjectAgentsDir(): string {

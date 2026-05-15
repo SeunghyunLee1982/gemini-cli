@@ -15,6 +15,7 @@ import {
 } from './types.js';
 import { getAgentCardLoadOptions, getRemoteAgentTargetUrl } from './types.js';
 import { loadAgentsFromDirectory } from './agentLoader.js';
+import type { AgentLoadResult } from './agentLoader.js';
 import { CodebaseInvestigatorAgent } from './codebase-investigator.js';
 import { CliHelpAgent } from './cli-help-agent.js';
 import { GeneralistAgent } from './generalist-agent.js';
@@ -174,8 +175,16 @@ export class AgentRegistry {
     const isTrustedFolder = this.config.isTrustedFolder();
 
     if (!folderTrustEnabled || isTrustedFolder) {
-      const projectAgentsDir = this.config.storage.getProjectAgentsDir();
-      const projectAgents = await loadAgentsFromDirectory(projectAgentsDir);
+      const projectAgentDirs = [
+        this.config.storage.getProjectAgentsDir(),
+        this.config.storage.getProjectClaudeAgentsDir(),
+      ];
+      const projectAgents: AgentLoadResult = { agents: [], errors: [] };
+      for (const dir of projectAgentDirs) {
+        const loaded = await loadAgentsFromDirectory(dir);
+        projectAgents.agents.push(...loaded.agents);
+        projectAgents.errors.push(...loaded.errors);
+      }
       for (const error of projectAgents.errors) {
         const msg = `Agent loading error: ${error.message}`;
         errors?.push(msg);
@@ -231,9 +240,17 @@ export class AgentRegistry {
       );
     }
 
-    // Load user-level agents: ~/.gemini/agents/
-    const userAgentsDir = Storage.getUserAgentsDir();
-    const userAgents = await loadAgentsFromDirectory(userAgentsDir);
+    // Load user-level agents: ~/.gemini/agents/ and ~/.claude/agents/
+    const userAgentDirs = [
+      Storage.getUserAgentsDir(),
+      Storage.getUserClaudeAgentsDir(),
+    ];
+    const userAgents: AgentLoadResult = { agents: [], errors: [] };
+    for (const dir of userAgentDirs) {
+      const loaded = await loadAgentsFromDirectory(dir);
+      userAgents.agents.push(...loaded.agents);
+      userAgents.errors.push(...loaded.errors);
+    }
     for (const error of userAgents.errors) {
       debugLogger.warn(
         `[AgentRegistry] Error loading user agent: ${error.message}`,

@@ -8,6 +8,9 @@ import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import process from 'node:process';
 import * as path from 'node:path';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as crypto from 'node:crypto';
 import { execa } from 'execa';
 import { mcpCommand } from '../commands/mcp.js';
 import { extensionsCommand } from '../commands/extensions.js';
@@ -81,6 +84,8 @@ export interface CliArgs {
   debug: boolean | undefined;
   prompt: string | undefined;
   promptInteractive: string | undefined;
+  systemPrompt: string | undefined;
+  systemPromptFile: string | undefined;
   worktree?: string;
 
   yolo: boolean | undefined;
@@ -253,6 +258,9 @@ export async function parseArguments(
       if (argv['prompt'] && argv['promptInteractive']) {
         return 'Cannot use both --prompt (-p) and --prompt-interactive (-i) together';
       }
+      if (argv['systemPrompt'] && argv['systemPromptFile']) {
+        return 'Cannot use both --system-prompt and --system-prompt-file together';
+      }
       if (argv['yolo'] && argv['approvalMode']) {
         return 'Cannot use both --yolo (-y) and --approval-mode together. Use --approval-mode=yolo instead.';
       }
@@ -302,6 +310,18 @@ export async function parseArguments(
           nargs: 1,
           description:
             'Execute the provided prompt and continue in interactive mode',
+        })
+        .option('system-prompt', {
+          type: 'string',
+          nargs: 1,
+          description:
+            'Override the default system prompt with the given text (REPLACE semantics).',
+        })
+        .option('system-prompt-file', {
+          type: 'string',
+          nargs: 1,
+          description:
+            'Override the default system prompt with the contents of the given file (REPLACE semantics).',
         })
         .option('skip-trust', {
           type: 'boolean',
@@ -587,6 +607,31 @@ export async function loadCliConfig(
     process.env['GEMINI_SANDBOX'] = 'true';
   }
 
+  // --system-prompt / --system-prompt-file: route to GEMINI_SYSTEM_MD so the
+  // existing prompt override mechanism in promptProvider.ts picks it up.
+  // REPLACE semantics — these flags override any pre-existing env var.
+  if (argv.systemPromptFile) {
+    const resolved = path.resolve(argv.systemPromptFile);
+    if (!fs.existsSync(resolved)) {
+      throw new Error(`--system-prompt-file: file does not exist: ${resolved}`);
+    }
+    process.env['GEMINI_SYSTEM_MD'] = resolved;
+  } else if (argv.systemPrompt !== undefined) {
+    const tempFile = path.join(
+      os.tmpdir(),
+      `gemini-system-prompt-${process.pid}-${crypto.randomBytes(6).toString('hex')}.md`,
+    );
+    fs.writeFileSync(tempFile, argv.systemPrompt, 'utf8');
+    process.env['GEMINI_SYSTEM_MD'] = tempFile;
+    process.once('exit', () => {
+      try {
+        fs.unlinkSync(tempFile);
+      } catch {
+        // best-effort cleanup
+      }
+    });
+  }
+
   const includeDirectoryTree = settings.context?.includeDirectoryTree ?? true;
 
   const ideMode = settings.ide?.enabled ?? false;
@@ -609,8 +654,9 @@ export async function loadCliConfig(
   if (settings.context?.fileName) {
     setServerGeminiMdFilename(settings.context.fileName);
   } else {
-    // Reset to default if not provided in settings.
-    resetGeminiMdFilename(DEFAULT_CONTEXT_FILENAME);
+    // Fallback chain: AGENTS.md → CLAUDE.md → GEMINI.md (override semantics
+    // applied per directory level in memoryDiscovery).
+    resetGeminiMdFilename(['AGENTS.md', 'CLAUDE.md', DEFAULT_CONTEXT_FILENAME]);
   }
 
   const fileService = new FileDiscoveryService(cwd);

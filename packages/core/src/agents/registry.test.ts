@@ -253,8 +253,10 @@ describe('AgentRegistry', () => {
         .mockResolvedValueOnce({
           agents: [projectAgent, uniqueProjectAgent],
           errors: [],
-        }) // Project dir
-        .mockResolvedValueOnce({ agents: [userAgent], errors: [] }); // User dir
+        }) // Project .gemini/agents
+        .mockResolvedValueOnce({ agents: [], errors: [] }) // Project .claude/agents
+        .mockResolvedValueOnce({ agents: [userAgent], errors: [] }) // User .gemini/agents
+        .mockResolvedValueOnce({ agents: [], errors: [] }); // User .claude/agents
 
       await registry.initialize();
 
@@ -265,7 +267,7 @@ describe('AgentRegistry', () => {
       expect(registry.getDefinition('project-only')).toBeDefined();
       expect(
         vi.mocked(tomlLoader.loadAgentsFromDirectory),
-      ).toHaveBeenCalledTimes(2);
+      ).toHaveBeenCalledTimes(4);
     });
 
     it('should NOT load TOML agents when enableAgents is false', async () => {

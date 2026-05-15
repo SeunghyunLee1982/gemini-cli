@@ -318,7 +318,8 @@ export async function getGlobalMemoryPaths(): Promise<string[]> {
   const userHome = homedir();
   const geminiMdFilenames = getAllGeminiMdFilenames();
 
-  const accessChecks = geminiMdFilenames.map(async (filename) => {
+  // Override semantics: first matching filename in chain order wins per dir.
+  for (const filename of geminiMdFilenames) {
     const globalPath = toAbsolutePath(
       path.join(userHome, GEMINI_DIR, filename),
     );
@@ -328,15 +329,12 @@ export async function getGlobalMemoryPaths(): Promise<string[]> {
         '[DEBUG] [MemoryDiscovery] Found global memory file:',
         globalPath,
       );
-      return globalPath;
+      return [globalPath];
     } catch {
-      return null;
+      // try next filename in the chain
     }
-  });
-
-  return (await Promise.all(accessChecks)).filter(
-    (p): p is string => p !== null,
-  );
+  }
+  return [];
 }
 
 export async function getUserProjectMemoryPaths(
@@ -359,7 +357,8 @@ export async function getUserProjectMemoryPaths(
   }
 
   const geminiMdFilenames = getAllGeminiMdFilenames();
-  const accessChecks = geminiMdFilenames.map(async (filename) => {
+  // Override semantics: first matching filename in chain order wins per dir.
+  for (const filename of geminiMdFilenames) {
     const legacyMemoryPath = toAbsolutePath(
       path.join(projectMemoryDir, filename),
     );
@@ -369,15 +368,12 @@ export async function getUserProjectMemoryPaths(
         '[DEBUG] [MemoryDiscovery] Found legacy user project memory file:',
         legacyMemoryPath,
       );
-      return legacyMemoryPath;
+      return [legacyMemoryPath];
     } catch {
-      return null;
+      // try next filename in the chain
     }
-  });
-
-  return (await Promise.all(accessChecks)).filter(
-    (p): p is string => p !== null,
-  );
+  }
+  return [];
 }
 
 export function getExtensionMemoryPaths(
@@ -482,22 +478,22 @@ async function findUpwardGeminiFiles(
       break;
     }
 
-    // Parallelize checks for all filename variants in the current directory
-    const accessChecks = geminiMdFilenames.map(async (filename) => {
+    // Override semantics: first matching filename in chain order wins per dir.
+    let foundPathInDir: string | null = null;
+    for (const filename of geminiMdFilenames) {
       const potentialPath = toAbsolutePath(path.join(currentDir, filename));
       try {
         await fs.access(potentialPath, fsSync.constants.R_OK);
-        return potentialPath;
+        foundPathInDir = potentialPath;
+        break;
       } catch {
-        return null;
+        // try next filename in the chain
       }
-    });
+    }
 
-    const foundPathsInDir = (await Promise.all(accessChecks)).filter(
-      (p): p is string => p !== null,
-    );
-
-    upwardPaths.unshift(...foundPathsInDir);
+    if (foundPathInDir) {
+      upwardPaths.unshift(foundPathInDir);
+    }
 
     const parentDir = path.dirname(currentDir);
     const currentKey = normalizePath(currentDir);

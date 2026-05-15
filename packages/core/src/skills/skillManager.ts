@@ -78,6 +78,12 @@ export class SkillManager {
     );
     this.addSkillsWithPrecedence(userAgentSkills);
 
+    // 3.2 User Claude Code compat skills (.claude/skills)
+    const userClaudeSkills = await loadSkillsFromDir(
+      Storage.getUserClaudeSkillsDir(),
+    );
+    this.addSkillsWithPrecedence(userClaudeSkills);
+
     // 4. Workspace skills (highest precedence)
     if (!isTrusted) {
       debugLogger.debug(
@@ -96,6 +102,12 @@ export class SkillManager {
       storage.getProjectAgentSkillsDir(),
     );
     this.addSkillsWithPrecedence(projectAgentSkills);
+
+    // 4.2 Workspace Claude Code compat skills (.claude/skills)
+    const projectClaudeSkills = await loadSkillsFromDir(
+      storage.getProjectClaudeSkillsDir(),
+    );
+    this.addSkillsWithPrecedence(projectClaudeSkills);
   }
 
   /**
