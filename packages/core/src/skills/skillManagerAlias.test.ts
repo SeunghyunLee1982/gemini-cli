@@ -175,4 +175,134 @@ describe('SkillManager Alias', () => {
     expect(skills).toHaveLength(1);
     expect(skills[0].description).toBe('agent-desc');
   });
+
+  it('should discover skills from .claude/skills directory', async () => {
+    const userClaudeDir = path.join(testRootDir, 'user', '.claude', 'skills');
+    const projectClaudeDir = path.join(
+      testRootDir,
+      'workspace',
+      '.claude',
+      'skills',
+    );
+
+    await fs.mkdir(userClaudeDir, { recursive: true });
+    await fs.mkdir(projectClaudeDir, { recursive: true });
+
+    vi.mocked(loadSkillsFromDir).mockImplementation(async (dir) => {
+      if (dir === userClaudeDir) {
+        return [
+          {
+            name: 'user-claude',
+            description: 'desc',
+            location: 'loc',
+            body: '',
+          },
+        ];
+      }
+      if (dir === projectClaudeDir) {
+        return [
+          {
+            name: 'project-claude',
+            description: 'desc',
+            location: 'loc',
+            body: '',
+          },
+        ];
+      }
+      return [];
+    });
+
+    vi.spyOn(Storage, 'getUserSkillsDir').mockReturnValue('/non-existent-user');
+    vi.spyOn(Storage, 'getUserAgentSkillsDir').mockReturnValue(
+      '/non-existent-user-agents',
+    );
+    vi.spyOn(Storage, 'getUserClaudeSkillsDir').mockReturnValue(userClaudeDir);
+
+    const storage = new Storage(path.join(testRootDir, 'workspace'));
+    vi.spyOn(storage, 'getProjectSkillsDir').mockReturnValue(
+      '/non-existent-proj',
+    );
+    vi.spyOn(storage, 'getProjectAgentSkillsDir').mockReturnValue(
+      '/non-existent-proj-agents',
+    );
+    vi.spyOn(storage, 'getProjectClaudeSkillsDir').mockReturnValue(
+      projectClaudeDir,
+    );
+
+    const service = new SkillManager();
+    // @ts-expect-error accessing private method for testing
+    vi.spyOn(service, 'discoverBuiltinSkills').mockResolvedValue(undefined);
+
+    await service.discoverSkills(storage, [], true);
+
+    const skills = service.getSkills();
+    expect(skills).toHaveLength(2);
+    const names = skills.map((s) => s.name);
+    expect(names).toContain('user-claude');
+    expect(names).toContain('project-claude');
+  });
+
+  it('should resolve .agents > .claude > .gemini precedence on same-name conflict', async () => {
+    const userGeminiDir = path.join(testRootDir, 'user', '.gemini', 'skills');
+    const userClaudeDir = path.join(testRootDir, 'user', '.claude', 'skills');
+    const userAgentDir = path.join(testRootDir, 'user', '.agents', 'skills');
+
+    await fs.mkdir(userGeminiDir, { recursive: true });
+    await fs.mkdir(userClaudeDir, { recursive: true });
+    await fs.mkdir(userAgentDir, { recursive: true });
+
+    vi.mocked(loadSkillsFromDir).mockImplementation(async (dir) => {
+      if (dir === userGeminiDir) {
+        return [
+          {
+            name: 'conflict',
+            description: 'from-gemini',
+            location: 'loc',
+            body: '',
+          },
+        ];
+      }
+      if (dir === userClaudeDir) {
+        return [
+          {
+            name: 'conflict',
+            description: 'from-claude',
+            location: 'loc',
+            body: '',
+          },
+        ];
+      }
+      if (dir === userAgentDir) {
+        return [
+          {
+            name: 'conflict',
+            description: 'from-agents',
+            location: 'loc',
+            body: '',
+          },
+        ];
+      }
+      return [];
+    });
+
+    vi.spyOn(Storage, 'getUserSkillsDir').mockReturnValue(userGeminiDir);
+    vi.spyOn(Storage, 'getUserClaudeSkillsDir').mockReturnValue(userClaudeDir);
+    vi.spyOn(Storage, 'getUserAgentSkillsDir').mockReturnValue(userAgentDir);
+
+    const storage = new Storage('/dummy');
+    vi.spyOn(storage, 'getProjectSkillsDir').mockReturnValue('/none-1');
+    vi.spyOn(storage, 'getProjectClaudeSkillsDir').mockReturnValue('/none-2');
+    vi.spyOn(storage, 'getProjectAgentSkillsDir').mockReturnValue('/none-3');
+
+    const service = new SkillManager();
+    // @ts-expect-error accessing private method for testing
+    vi.spyOn(service, 'discoverBuiltinSkills').mockResolvedValue(undefined);
+
+    await service.discoverSkills(storage, [], true);
+
+    const skills = service.getSkills();
+    expect(skills).toHaveLength(1);
+    // .agents wins per the project's stated chain: .agents/ → .claude/ → .gemini/
+    expect(skills[0].description).toBe('from-agents');
+  });
 });

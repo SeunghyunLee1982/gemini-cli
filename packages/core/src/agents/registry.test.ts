@@ -270,6 +270,48 @@ describe('AgentRegistry', () => {
       ).toHaveBeenCalledTimes(4);
     });
 
+    it('should load agents from .claude/agents/ alongside .gemini/agents/', async () => {
+      mockConfig = makeMockedConfig({ enableAgents: true });
+      registry = new TestableAgentRegistry(mockConfig);
+
+      const geminiProjectAgent = {
+        ...MOCK_AGENT_V1,
+        name: 'gemini-project-agent',
+        description: 'from .gemini/agents',
+      };
+      const claudeProjectAgent = {
+        ...MOCK_AGENT_V1,
+        name: 'claude-project-agent',
+        description: 'from .claude/agents',
+      };
+      const claudeUserAgent = {
+        ...MOCK_AGENT_V1,
+        name: 'claude-user-agent',
+        description: 'from ~/.claude/agents',
+      };
+
+      vi.mocked(tomlLoader.loadAgentsFromDirectory)
+        .mockResolvedValueOnce({
+          agents: [geminiProjectAgent],
+          errors: [],
+        }) // Project .gemini/agents
+        .mockResolvedValueOnce({
+          agents: [claudeProjectAgent],
+          errors: [],
+        }) // Project .claude/agents
+        .mockResolvedValueOnce({ agents: [], errors: [] }) // User .gemini/agents
+        .mockResolvedValueOnce({
+          agents: [claudeUserAgent],
+          errors: [],
+        }); // User .claude/agents
+
+      await registry.initialize();
+
+      expect(registry.getDefinition('gemini-project-agent')).toBeDefined();
+      expect(registry.getDefinition('claude-project-agent')).toBeDefined();
+      expect(registry.getDefinition('claude-user-agent')).toBeDefined();
+    });
+
     it('should NOT load TOML agents when enableAgents is false', async () => {
       const disabledConfig = makeMockedConfig({
         enableAgents: false,

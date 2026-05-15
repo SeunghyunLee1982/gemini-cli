@@ -72,17 +72,20 @@ export class SkillManager {
     const userSkills = await loadSkillsFromDir(Storage.getUserSkillsDir());
     this.addSkillsWithPrecedence(userSkills);
 
-    // 3.1 User agent skills alias (.agents/skills)
-    const userAgentSkills = await loadSkillsFromDir(
-      Storage.getUserAgentSkillsDir(),
-    );
-    this.addSkillsWithPrecedence(userAgentSkills);
+    // Precedence chain (later wins on same-name): .gemini → .claude → .agents
+    // matches the project convention: .agents/ → .claude/ → .gemini/ (first wins).
 
-    // 3.2 User Claude Code compat skills (.claude/skills)
+    // 3.1 User Claude Code compat skills (.claude/skills)
     const userClaudeSkills = await loadSkillsFromDir(
       Storage.getUserClaudeSkillsDir(),
     );
     this.addSkillsWithPrecedence(userClaudeSkills);
+
+    // 3.2 User agent skills alias (.agents/skills) — highest within user tier
+    const userAgentSkills = await loadSkillsFromDir(
+      Storage.getUserAgentSkillsDir(),
+    );
+    this.addSkillsWithPrecedence(userAgentSkills);
 
     // 4. Workspace skills (highest precedence)
     if (!isTrusted) {
@@ -97,17 +100,19 @@ export class SkillManager {
     );
     this.addSkillsWithPrecedence(projectSkills);
 
-    // 4.1 Workspace agent skills alias (.agents/skills)
-    const projectAgentSkills = await loadSkillsFromDir(
-      storage.getProjectAgentSkillsDir(),
-    );
-    this.addSkillsWithPrecedence(projectAgentSkills);
+    // Precedence chain (later wins): .gemini → .claude → .agents within tier.
 
-    // 4.2 Workspace Claude Code compat skills (.claude/skills)
+    // 4.1 Workspace Claude Code compat skills (.claude/skills)
     const projectClaudeSkills = await loadSkillsFromDir(
       storage.getProjectClaudeSkillsDir(),
     );
     this.addSkillsWithPrecedence(projectClaudeSkills);
+
+    // 4.2 Workspace agent skills alias (.agents/skills) — highest within tier
+    const projectAgentSkills = await loadSkillsFromDir(
+      storage.getProjectAgentSkillsDir(),
+    );
+    this.addSkillsWithPrecedence(projectAgentSkills);
   }
 
   /**
