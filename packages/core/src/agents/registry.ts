@@ -368,7 +368,53 @@ export class AgentRegistry {
       this.registerLocalAgent(definition);
     } else if (definition.kind === 'remote') {
       await this.registerRemoteAgent(definition, errors);
+    } else if (definition.kind === 'anthropic') {
+      this.registerAnthropicAgent(definition);
     }
+  }
+
+  /**
+   * Registers an Anthropic-backed agent definition. Mirrors registerLocalAgent
+   * but skips Gemini-specific model-config registration (Anthropic models are
+   * resolved at invocation time by AnthropicAgentInvocation).
+   */
+  protected registerAnthropicAgent<TOutput extends z.ZodTypeAny>(
+    definition: AgentDefinition<TOutput>,
+  ): void {
+    if (definition.kind !== 'anthropic') {
+      return;
+    }
+
+    if (!definition.name || !definition.description) {
+      debugLogger.warn(
+        `[AgentRegistry] Skipping invalid anthropic agent definition. Missing name or description.`,
+      );
+      return;
+    }
+
+    this.allDefinitions.set(definition.name, definition);
+
+    const settingsOverrides =
+      this.config.getAgentsSettings().overrides?.[definition.name];
+
+    if (!this.isAgentEnabled(definition, settingsOverrides)) {
+      if (this.config.getDebugMode()) {
+        debugLogger.log(
+          `[AgentRegistry] Skipping disabled anthropic agent '${definition.name}'`,
+        );
+      }
+      return;
+    }
+
+    if (this.agents.has(definition.name) && this.config.getDebugMode()) {
+      debugLogger.log(
+        `[AgentRegistry] Overriding agent '${definition.name}' with anthropic definition`,
+      );
+    }
+
+    // v0: overrides not yet supported for anthropic agents.
+    this.agents.set(definition.name, definition);
+    this.addAgentPolicy(definition);
   }
 
   /**

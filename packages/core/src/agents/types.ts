@@ -305,9 +305,32 @@ export interface RemoteAgentDefinition<
   agentCardJson?: string;
 }
 
+/**
+ * Definition for an Anthropic-backed sub-agent. The agent's response is
+ * obtained by calling the Anthropic Messages API directly with the configured
+ * system prompt and model. The Gemini agent loop is not used.
+ *
+ * Authentication is taken from `process.env.ANTHROPIC_API_KEY` at invocation
+ * time. The bridge enforces no Code Assist / Gemini OAuth on this path.
+ */
+export interface AnthropicAgentDefinition<
+  TOutput extends z.ZodTypeAny = z.ZodUnknown,
+> extends BaseAgentDefinition<TOutput> {
+  kind: 'anthropic';
+  /** Anthropic model identifier, e.g., 'claude-haiku-4-5', 'claude-opus-4-7'. */
+  model: string;
+  /** System prompt (markdown body of the agent definition file). */
+  system_prompt: string;
+  /** Max output tokens (defaults to a conservative value if unset). */
+  max_tokens?: number;
+  /** Sampling temperature (0–1). */
+  temperature?: number;
+}
+
 export type AgentDefinition<TOutput extends z.ZodTypeAny = z.ZodUnknown> =
   | LocalAgentDefinition<TOutput>
-  | RemoteAgentDefinition<TOutput>;
+  | RemoteAgentDefinition<TOutput>
+  | AnthropicAgentDefinition<TOutput>;
 
 /**
  * Configures the initial prompt for the agent.

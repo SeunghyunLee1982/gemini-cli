@@ -81,6 +81,32 @@ git config --global alias.pr-branch \
 4. `fix(cli): make --skip-trust actually load workspace settings` — also pushed
    upstream as PR #27137. Will become a no-op on `personal` once upstream merges
    and we rebase.
+5. `feat(agents): add anthropic agent kind` — adds `kind: anthropic` to the
+   agent registry so `.claude/agents/*.md` can declare Claude-backed sub-agents
+   (e.g., `model: claude-haiku-4-5`). Backed by `@anthropic-ai/sdk` in-process.
+   v0 scope: single-turn, text-only, no tool use within the sub-agent.
+   ToS-clean: `ANTHROPIC_API_KEY` only, no Google OAuth involved.
+
+### Anthropic sub-agent example
+
+`~/.claude/agents/my-helper.md`:
+
+```markdown
+---
+kind: anthropic
+name: my-helper
+description: A Claude-backed helper. Use for X.
+model: claude-haiku-4-5
+max_tokens: 2048
+temperature: 0.7
+---
+
+You are a helpful assistant. Reply with...
+```
+
+Then the Gemini main agent can delegate via the `agent` tool with
+`agent_name: 'my-helper'`. Requires `ANTHROPIC_API_KEY` in env (loaded
+automatically from `.env` at or above the workspace).
 
 ## Auth / ToS reminders
 

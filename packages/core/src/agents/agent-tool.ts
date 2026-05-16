@@ -18,6 +18,7 @@ import type { MessageBus } from '../confirmation-bus/message-bus.js';
 import type { AgentDefinition, AgentInputs } from './types.js';
 import { LocalSubagentInvocation } from './local-invocation.js';
 import { RemoteAgentInvocation } from './remote-invocation.js';
+import { AnthropicAgentInvocation } from './anthropic-invocation.js';
 import { BROWSER_AGENT_NAME } from './browser/browserAgentDefinition.js';
 import { BrowserAgentInvocation } from './browser/browserAgentInvocation.js';
 import { formatUserHintsForModel } from '../utils/fastAckHelper.js';
@@ -162,6 +163,13 @@ class DelegateInvocation extends BaseToolInvocation<
 
     if (this.definition.kind === 'remote') {
       return new RemoteAgentInvocation(
+        this.definition,
+        this.context,
+        agentArgs,
+        this.messageBus,
+      );
+    } else if (this.definition.kind === 'anthropic') {
+      return new AnthropicAgentInvocation(
         this.definition,
         this.context,
         agentArgs,

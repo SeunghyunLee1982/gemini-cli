@@ -244,14 +244,34 @@ const remoteAgentSchema = z.union([
 
 type FrontmatterRemoteAgentDefinition = z.infer<typeof remoteAgentSchema>;
 
+const anthropicAgentSchema = z
+  .object({
+    kind: z.literal('anthropic'),
+    name: nameSchema,
+    description: z.string().min(1),
+    display_name: z.string().optional(),
+    model: z.string().min(1),
+    max_tokens: z.number().int().positive().optional(),
+    temperature: z.number().min(0).max(1).optional(),
+  })
+  .strict();
+
+type FrontmatterAnthropicAgentDefinition = z.infer<
+  typeof anthropicAgentSchema
+> & {
+  system_prompt: string;
+};
+
 type FrontmatterAgentDefinition =
   | FrontmatterLocalAgentDefinition
-  | FrontmatterRemoteAgentDefinition;
+  | FrontmatterRemoteAgentDefinition
+  | FrontmatterAnthropicAgentDefinition;
 
 const agentUnionOptions = [
   { label: 'Local Agent' },
   { label: 'Remote Agent' },
   { label: 'Remote Agent' },
+  { label: 'Anthropic Agent' },
 ];
 
 const remoteAgentsListSchema = z.array(remoteAgentSchema);
@@ -260,15 +280,20 @@ const markdownFrontmatterSchema = z.union([
   localAgentSchema,
   remoteAgentUrlSchema,
   remoteAgentJsonSchema,
+  anthropicAgentSchema,
 ]);
 
-function guessIntendedKind(rawInput: unknown): 'local' | 'remote' | undefined {
+function guessIntendedKind(
+  rawInput: unknown,
+): 'local' | 'remote' | 'anthropic' | undefined {
   if (typeof rawInput !== 'object' || rawInput === null) return undefined;
   const input = rawInput as Partial<FrontmatterLocalAgentDefinition> &
-    Partial<FrontmatterRemoteAgentDefinition>;
+    Partial<FrontmatterRemoteAgentDefinition> &
+    Partial<FrontmatterAnthropicAgentDefinition>;
 
   if (input.kind === 'local') return 'local';
   if (input.kind === 'remote') return 'remote';
+  if (input.kind === 'anthropic') return 'anthropic';
 
   const hasLocalKeys =
     'tools' in input ||
@@ -397,6 +422,16 @@ export async function parseAgentMarkdown(
       {
         ...frontmatter,
         kind: 'remote',
+      },
+    ];
+  }
+
+  if (frontmatter.kind === 'anthropic') {
+    return [
+      {
+        ...frontmatter,
+        kind: 'anthropic',
+        system_prompt: body.trim(),
       },
     ];
   }
@@ -541,6 +576,32 @@ export function markdownToAgentDefinition(
       metadata?.filePath || 'unknown',
       'Unexpected state: neither agent_card_json nor agent_card_url present on remote agent',
     );
+  }
+
+  if (markdown.kind === 'anthropic') {
+    return {
+      kind: 'anthropic',
+      name: markdown.name,
+      description: markdown.description,
+      displayName: markdown.display_name,
+      model: markdown.model,
+      system_prompt: markdown.system_prompt,
+      max_tokens: markdown.max_tokens,
+      temperature: markdown.temperature,
+      inputConfig: {
+        inputSchema: {
+          type: 'object',
+          properties: {
+            prompt: {
+              type: 'string',
+              description: 'The prompt to send to the Anthropic sub-agent.',
+            },
+          },
+          required: ['prompt'],
+        },
+      },
+      metadata,
+    };
   }
 
   // If a model is specified, use it. Otherwise, inherit
