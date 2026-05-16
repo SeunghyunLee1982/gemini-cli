@@ -2614,6 +2614,30 @@ const SETTINGS_SCHEMA = {
         ref: 'HookDefinitionArray',
         mergeStrategy: MergeStrategy.CONCAT,
       },
+      UserPromptSubmit: {
+        type: 'array',
+        label: 'User Prompt Submit Hooks (Claude Code alias)',
+        category: 'Advanced',
+        requiresRestart: false,
+        default: [],
+        description:
+          'Alias for BeforeAgent. Fires once at the start of each turn. Provided for compatibility with Claude Code hook configurations.',
+        showInDialog: false,
+        ref: 'HookDefinitionArray',
+        mergeStrategy: MergeStrategy.CONCAT,
+      },
+      Stop: {
+        type: 'array',
+        label: 'Stop Hooks (Claude Code alias)',
+        category: 'Advanced',
+        requiresRestart: false,
+        default: [],
+        description:
+          'Alias for AfterAgent. Fires once when the main agent finishes responding. Provided for compatibility with Claude Code hook configurations.',
+        showInDialog: false,
+        ref: 'HookDefinitionArray',
+        mergeStrategy: MergeStrategy.CONCAT,
+      },
       Notification: {
         type: 'array',
         label: 'Notification Hooks',

@@ -252,6 +252,66 @@ describe('HookRegistry', () => {
       expect(mockDebugLogger.warn).toHaveBeenCalled(); // At least some warnings should be logged
     });
 
+    it('should normalize Claude Code alias UserPromptSubmit -> BeforeAgent', async () => {
+      const mockHooksConfig = {
+        UserPromptSubmit: [
+          {
+            hooks: [
+              {
+                type: 'command',
+                command: './hooks/log-user-input.sh',
+              },
+            ],
+          },
+        ],
+      };
+
+      vi.mocked(mockConfig.getHooks).mockReturnValue(
+        mockHooksConfig as unknown as {
+          [K in HookEventName]?: HookDefinition[];
+        },
+      );
+
+      await hookRegistry.initialize();
+
+      const hooks = hookRegistry.getAllHooks();
+      expect(hooks).toHaveLength(1);
+      expect(hooks[0].eventName).toBe(HookEventName.BeforeAgent);
+      expect(
+        hookRegistry.getHooksForEvent(HookEventName.BeforeAgent),
+      ).toHaveLength(1);
+    });
+
+    it('should normalize Claude Code alias Stop -> AfterAgent', async () => {
+      const mockHooksConfig = {
+        Stop: [
+          {
+            hooks: [
+              {
+                type: 'command',
+                command: './hooks/on-stop.sh',
+              },
+            ],
+          },
+        ],
+      };
+
+      vi.mocked(mockConfig.getHooks).mockReturnValue(
+        mockHooksConfig as unknown as {
+          [K in HookEventName]?: HookDefinition[];
+        },
+      );
+
+      await hookRegistry.initialize();
+
+      const hooks = hookRegistry.getAllHooks();
+      expect(hooks).toHaveLength(1);
+      expect(hooks[0].eventName).toBe(HookEventName.AfterAgent);
+      expect(
+        hookRegistry.getHooksForEvent(HookEventName.AfterAgent),
+      ).toHaveLength(1);
+    });
+
     it('should respect disabled hooks using friendly name', async () => {
       const mockHooksConfig = {
         BeforeTool: [

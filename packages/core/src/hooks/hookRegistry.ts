@@ -210,7 +210,17 @@ please review the project settings (.gemini/settings.json) and remove them.`;
         continue;
       }
 
-      if (!this.isValidEventName(eventName)) {
+      // Claude Code naming aliases: UserPromptSubmit -> BeforeAgent, Stop ->
+      // AfterAgent. The internal semantics are equivalent (fire once per turn
+      // around the outer agent loop), so we normalize at config load time.
+      const normalizedEventName =
+        eventName === 'UserPromptSubmit'
+          ? HookEventName.BeforeAgent
+          : eventName === 'Stop'
+            ? HookEventName.AfterAgent
+            : eventName;
+
+      if (!this.isValidEventName(normalizedEventName)) {
         coreEvents.emitFeedback(
           'warning',
           `Invalid hook event name: "${eventName}" from ${source} config. Skipping.`,
@@ -218,7 +228,7 @@ please review the project settings (.gemini/settings.json) and remove them.`;
         continue;
       }
 
-      const typedEventName = eventName;
+      const typedEventName = normalizedEventName;
 
       if (!Array.isArray(definitions)) {
         debugLogger.warn(
