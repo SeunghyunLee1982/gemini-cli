@@ -306,6 +306,22 @@ export interface RemoteAgentDefinition<
 }
 
 /**
+ * Default max turns for an Anthropic agent's tool-use loop when `tools` is
+ * non-empty. Mirrors Anthropic's general guidance for short sub-agent loops;
+ * keeps the runaway-cost surface narrow while still being enough turns for
+ * realistic multi-tool investigations.
+ */
+export const DEFAULT_ANTHROPIC_MAX_TURNS = 5;
+
+/**
+ * Max characters (UTF-16 code units) of `partToString` output we feed back to
+ * Claude as a single `tool_result.content`. ~12k tokens at typical English
+ * density. Hard cap so a single huge `read_file` cannot evict the entire
+ * conversation; soft hint encourages refinement on the next call.
+ */
+export const ANTHROPIC_TOOL_RESULT_MAX_CHARS = 49152;
+
+/**
  * Definition for an Anthropic-backed sub-agent. The agent's response is
  * obtained by calling the Anthropic Messages API directly with the configured
  * system prompt and model. The Gemini agent loop is not used.
@@ -325,6 +341,19 @@ export interface AnthropicAgentDefinition<
   max_tokens?: number;
   /** Sampling temperature (0–1). */
   temperature?: number;
+  /**
+   * Optional whitelist of Gemini tool names the sub-agent is allowed to call
+   * (e.g., `read_file`, `grep_search`, `glob`, `list_directory`,
+   * `read_many_files`). Empty/omitted preserves v0 single-shot behavior:
+   * the sub-agent runs without tools.
+   */
+  tools?: string[];
+  /**
+   * Optional cap on Anthropic message-loop turns when `tools` is non-empty.
+   * Defaults to {@link DEFAULT_ANTHROPIC_MAX_TURNS}. Has no effect when
+   * `tools` is empty/omitted (the loop is always 1 turn — single-shot path).
+   */
+  max_turns?: number;
 }
 
 export type AgentDefinition<TOutput extends z.ZodTypeAny = z.ZodUnknown> =

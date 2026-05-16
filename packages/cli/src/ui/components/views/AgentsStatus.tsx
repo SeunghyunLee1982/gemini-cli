@@ -21,6 +21,7 @@ export const AgentsStatus: React.FC<AgentsStatusProps> = ({
 }) => {
   const localAgents = agents.filter((a) => a.kind === 'local');
   const remoteAgents = agents.filter((a) => a.kind === 'remote');
+  const anthropicAgents = agents.filter((a) => a.kind === 'anthropic');
 
   if (agents.length === 0) {
     return (
@@ -68,6 +69,9 @@ export const AgentsStatus: React.FC<AgentsStatusProps> = ({
       {renderAgentList('Local Agents', localAgents)}
       {localAgents.length > 0 && remoteAgents.length > 0 && <Box height={1} />}
       {renderAgentList('Remote Agents', remoteAgents)}
+      {(localAgents.length > 0 || remoteAgents.length > 0) &&
+        anthropicAgents.length > 0 && <Box height={1} />}
+      {renderAgentList('Anthropic Agents', anthropicAgents)}
     </Box>
   );
 };

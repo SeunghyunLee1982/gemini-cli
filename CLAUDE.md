@@ -84,12 +84,13 @@ git config --global alias.pr-branch \
 5. `feat(agents): add anthropic agent kind` — adds `kind: anthropic` to the
    agent registry so `.claude/agents/*.md` can declare Claude-backed sub-agents
    (e.g., `model: claude-haiku-4-5`). Backed by `@anthropic-ai/sdk` in-process.
-   v0 scope: single-turn, text-only, no tool use within the sub-agent.
-   ToS-clean: `ANTHROPIC_API_KEY` only, no Google OAuth involved.
+   Single-shot path (no `tools` field) is the v0 baseline; the `tools` /
+   `max_turns` fields enable v1's tool-use loop. ToS-clean: `ANTHROPIC_API_KEY`
+   only, no Google OAuth involved.
 
 ### Anthropic sub-agent example
 
-`~/.claude/agents/my-helper.md`:
+`~/.claude/agents/my-helper.md` (single-shot, v0 back-compat):
 
 ```markdown
 ---
@@ -103,6 +104,38 @@ temperature: 0.7
 
 You are a helpful assistant. Reply with...
 ```
+
+`~/.claude/agents/my-investigator.md` (v1 with tool use):
+
+```markdown
+---
+kind: anthropic
+name: my-investigator
+description: A read-only Claude investigator.
+model: claude-haiku-4-5
+tools:
+  - read_file
+  - grep_search
+  - glob
+  - list_directory
+  - read_many_files
+max_turns: 5
+---
+
+You are a read-only investigator. Use the available tools to find what the user
+asked for, then summarise your findings.
+```
+
+Anthropic-agent fields:
+
+- `tools` — whitelist of Gemini tool names the sub-agent may call. Each entry
+  must be a known built-in or MCP tool name; wildcards are not allowed. Omit for
+  v0 single-shot behavior. Recommended starter set is read-only: `read_file`,
+  `grep_search`, `glob`, `list_directory`, `read_many_files`.
+- `max_turns` — caps the Anthropic message-loop turns when `tools` is non-empty.
+  Default 5, max 50. No effect when `tools` is empty/omitted.
+- `kind: anthropic` is **required** when using any anthropic-only field; the
+  loader will not infer the kind from `tools` / `max_turns` alone.
 
 Then the Gemini main agent can delegate via the `agent` tool with
 `agent_name: 'my-helper'`. Requires `ANTHROPIC_API_KEY` in env (loaded

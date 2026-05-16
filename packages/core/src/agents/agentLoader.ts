@@ -253,6 +253,17 @@ const anthropicAgentSchema = z
     model: z.string().min(1),
     max_tokens: z.number().int().positive().optional(),
     temperature: z.number().min(0).max(1).optional(),
+    tools: z
+      .array(
+        z
+          .string()
+          .refine(
+            (val: string) => isValidToolName(val, { allowWildcards: false }),
+            { message: 'Invalid tool name' },
+          ),
+      )
+      .optional(),
+    max_turns: z.number().int().positive().max(50).optional(),
   })
   .strict();
 
@@ -295,12 +306,13 @@ function guessIntendedKind(
   if (input.kind === 'remote') return 'remote';
   if (input.kind === 'anthropic') return 'anthropic';
 
+  // `tools` and `max_turns` are NOT in this list: both `local` and `anthropic`
+  // schemas accept them, so they cannot disambiguate. Anthropic agents must
+  // declare `kind: anthropic` explicitly — there is no implicit-anthropic path.
   const hasLocalKeys =
-    'tools' in input ||
     'mcp_servers' in input ||
     'model' in input ||
     'temperature' in input ||
-    'max_turns' in input ||
     'timeout_mins' in input;
   const hasRemoteKeys =
     'agent_card_url' in input || 'auth' in input || 'agent_card_json' in input;
@@ -588,6 +600,8 @@ export function markdownToAgentDefinition(
       system_prompt: markdown.system_prompt,
       max_tokens: markdown.max_tokens,
       temperature: markdown.temperature,
+      tools: markdown.tools,
+      max_turns: markdown.max_turns,
       inputConfig: {
         inputSchema: {
           type: 'object',
