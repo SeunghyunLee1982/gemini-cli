@@ -71,6 +71,7 @@ export function mapToDisplay(
     let progressMessage: string | undefined = undefined;
     let progress: number | undefined = undefined;
     let progressTotal: number | undefined = undefined;
+    let subagent: string | undefined = undefined;
 
     switch (call.status) {
       case CoreToolCallStatus.Success:
@@ -85,6 +86,9 @@ export function mapToDisplay(
         correlationId = call.correlationId;
         // Pass through details. Context handles dispatch (callback vs bus).
         confirmationDetails = call.confirmationDetails;
+        // Phase 4 authority-attribution: surface the originating sub-agent
+        // id so the confirmation modal can render it explicitly.
+        subagent = call.subagent;
         break;
       case CoreToolCallStatus.Executing:
         resultDisplay = call.liveOutput;
@@ -125,6 +129,7 @@ export function mapToDisplay(
       subagentHistory: hasSubagentHistory(call)
         ? call.subagentHistory
         : undefined,
+      subagent,
     };
   });
 

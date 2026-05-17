@@ -203,8 +203,42 @@ When enabled, the orchestrator gains a single `swarm` tool with a discriminated
 ### v1.0 scope
 
 Sync only: `message` blocks until the session's turn completes. In-memory only:
-sessions die with the parent CLI process. Single discriminated tool. No async /
-shared workspace / budget caps in v1 — those are v1.1+.
+sessions die with the parent CLI process. Single discriminated tool. No async or
+budget caps in v1 — those are v1.1+. A **shared workspace directory** is created
+automatically (see below).
+
+### Shared workspace directory (Phase 4)
+
+`SwarmManager` lazily creates a per-session shared scratch directory at
+`<project>/.gemini/tmp/<session-id>/swarm/` on first `spawn`. The directory is
+the sibling of `plans/` (same lifecycle, same tier in the tempfile tree). All
+spawned agents in the current CLI session see the same directory through their
+standard file tools (`write_file`, `read_file`, etc.).
+
+**Plan Mode compatibility.** Plan Mode's policy whitelist explicitly allows
+`write_file` and `replace` inside the swarm dir (mirrors the existing plans-dir
+allowance). This is the only writable area available to swarm sub-agents while
+the orchestrator is in Plan Mode.
+
+**Recommended pattern.** To avoid the "orchestrator-as-secretary" anti-pattern
+(orchestrator copy-pasting JSON blobs between sub-agents), have each spawned
+agent write its analysis to `<dir>/<its-name>.md` and have downstream agents
+`read_file` instead. The orchestrator's job becomes routing instructions, not
+relaying multi-kB payloads. Example:
+
+```
+swarm spawn sonnet-1 → "Analyze packages/core/src/agents/anthropic-loop.ts and write your findings to <swarm_dir>/sonnet-1.md"
+swarm spawn sonnet-2 → "Read <swarm_dir>/sonnet-1.md and propose 3 alternative refactors. Write to <swarm_dir>/sonnet-2.md"
+orchestrator: read_file <swarm_dir>/sonnet-2.md → final synthesis
+```
+
+Cross-pollination remains a paste-verbatim handoff (the orchestrator must
+literally re-quote artifact contents in the receiving agent's prompt) when
+sub-agents need _short_ mutual context — the shared dir is the right tool for
+_long_ artifacts. See `.gemini/skills/swarm-collaboration/SKILL.md` (this repo)
+for the codified rules. Distinct from `async-pr-review`, which uses
+out-of-process `gemini -p` workers in worktrees rather than the in-process
+swarm.
 
 The full design discussion and locked acceptance test live in
 `/home/shawnlee/gemini-fork/design-loop/swarm-design.md`. The continuity gate

@@ -182,6 +182,16 @@ export type WaitingToolCall = {
   outcome?: ToolConfirmationOutcome;
   schedulerId?: string;
   approvalMode?: ApprovalMode;
+  /**
+   * Display name of the sub-agent that originated this tool call, if any.
+   * Set by the scheduler when its `subagent` option is populated (e.g.,
+   * swarm sessions pass the agent id like `sonnet-1`). The UI surfaces
+   * this in the confirmation modal so the user can tell which agent in a
+   * swarm is asking for approval (Phase 4 authority-attribution fix —
+   * defense-in-depth for the v1.0.1 inherited-toolset default). See
+   * `design-loop/swarm-design.md` Phase 4.
+   */
+  subagent?: string;
 };
 
 export type Status = ToolCall['status'];

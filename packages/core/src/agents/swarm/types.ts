@@ -17,7 +17,10 @@
  */
 
 import { z } from 'zod';
-import type { AnthropicModelAlias } from '../types.js';
+import {
+  type AnthropicModelAlias,
+  ANTHROPIC_MODEL_ALIAS_VALUES,
+} from '../types.js';
 
 /**
  * v1.0 only supports `anthropic`-kind sub-agents. `gemini` / `local` are
@@ -81,7 +84,10 @@ export const SwarmActionSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('spawn'),
     kind: z.literal('anthropic').optional(),
-    model: z.enum(['sonnet', 'opus']).optional(),
+    // Derived from `ANTHROPIC_MODEL_ALIASES` so adding a new alias in
+    // `../types.ts` immediately surfaces here without a separate edit
+    // (Phase 4 invariant-locality fix).
+    model: z.enum(ANTHROPIC_MODEL_ALIAS_VALUES).optional(),
     system_prompt: z.string().min(1),
     tools: z.array(z.string()).optional(),
     max_turns: z.number().int().positive().optional(),
@@ -106,18 +112,26 @@ export const SwarmActionSchema = z.discriminatedUnion('action', [
  * {@link SwarmActionSchema}. This is the single canonical type; consumers
  * should NOT redeclare the shape elsewhere.
  *
- * The `_modelAlias` re-export below is solely so the public type doc above
- * still references the alias type imported at the top of the file (avoids
- * a "declared but never used" complaint for callers reading the spec).
+ * `model` in the spawn variant narrows to `AnthropicModelAlias` because the
+ * Zod enum is built from `ANTHROPIC_MODEL_ALIAS_VALUES` (the single
+ * source-of-truth tuple in `../types.ts`). Adding an alias there propagates
+ * automatically — no drift across types/Zod/JSON-schema/manager.
  */
 export type SwarmAction = z.infer<typeof SwarmActionSchema>;
 
-// Re-emit `AnthropicModelAlias` indirectly so that downstream tools (and
-// the manager's `spawn(args)` extraction) keep a tight binding between the
-// alias surface and the Zod literal. If a future PR widens the alias to
-// include `haiku`, both the type alias and the Zod `model` enum must be
-// updated in lockstep; this re-export makes the dependency visible to grep.
-export type _SwarmModelAlias = AnthropicModelAlias;
+// Sanity assertion: the Zod enum and the static type must agree on the set
+// of accepted aliases. Drift here is a compile-time error, not a runtime
+// surprise. Phase 4 invariant-locality fix.
+type _SwarmSpawnAction = Extract<SwarmAction, { action: 'spawn' }>;
+type _SwarmModelField = NonNullable<_SwarmSpawnAction['model']>;
+type _AssertModelAliasMatches = _SwarmModelField extends AnthropicModelAlias
+  ? AnthropicModelAlias extends _SwarmModelField
+    ? true
+    : never
+  : never;
+// Force the assertion to be evaluated (otherwise TS would elide the alias).
+const _swarmModelAliasInvariant: _AssertModelAliasMatches = true;
+void _swarmModelAliasInvariant;
 
 /**
  * Discriminated result of a swarm tool invocation. The shape varies by

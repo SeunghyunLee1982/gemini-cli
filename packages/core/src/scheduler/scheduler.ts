@@ -125,6 +125,9 @@ export class Scheduler {
       this.messageBus,
       this.schedulerId,
       (call) => logToolCall(this.config, new ToolCallEvent(call)),
+      // Phase 4 authority-attribution: thread the subagent name into the
+      // state manager so every WaitingToolCall is stamped with it.
+      this.subagent,
     );
     this.executor = new ToolExecutor(this.context);
     this.modifier = new ToolModificationHandler();
@@ -670,6 +673,10 @@ export class Scheduler {
         onWaitingForConfirmation: this.onWaitingForConfirmation,
         systemMessage: hookSystemMessage,
         forcedDecision: hookDecision === 'ask' ? 'ask_user' : undefined,
+        // Phase 4 authority-attribution: pass the scheduler's subagent
+        // name through so the modal renders "Requested by <agent_id>"
+        // for swarm-originated tool calls.
+        subagent: this.subagent,
       });
       outcome = result.outcome;
       lastDetails = result.lastDetails;
@@ -877,6 +884,9 @@ export class Scheduler {
           getPreferredEditor: this.getPreferredEditor,
           schedulerId: this.schedulerId,
           onWaitingForConfirmation: this.onWaitingForConfirmation,
+          // Phase 4 authority-attribution: same subagent propagation as the
+          // primary confirm path above.
+          subagent: this.subagent,
         });
 
         if (confResult.outcome === ToolConfirmationOutcome.Cancel) {

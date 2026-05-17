@@ -158,6 +158,12 @@ function makeFakeConfig(): { config: Config; appController: AbortController } {
     getAppAbortSignal: () => appController.signal,
     getGlobalAppBus: () => bus,
     getToolRegistry: () => parentRegistry,
+    // Phase 4: SwarmManager.spawn touches storage.getProjectTempSwarmDir
+    // to create the shared workspace; stub it under the OS temp tree.
+    storage: {
+      getProjectTempSwarmDir: () =>
+        `${process.cwd()}/.gemini/tmp/test-continuity/swarm`,
+    },
   } as unknown as Config;
   return { config, appController };
 }

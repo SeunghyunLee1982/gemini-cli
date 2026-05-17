@@ -139,6 +139,13 @@ export interface IndividualToolCallDisplay {
   progress?: number;
   progressTotal?: number;
   subagentHistory?: SubagentActivityItem[];
+  /**
+   * Display name of the sub-agent that originated this tool call (e.g.,
+   * `sonnet-1`). When set, the confirmation modal renders an explicit
+   * "Requested by <name>" line so the user can disambiguate swarm
+   * sub-agents from the parent CLI (Phase 4 authority-attribution).
+   */
+  subagent?: string;
 }
 
 export interface CompressionProps {

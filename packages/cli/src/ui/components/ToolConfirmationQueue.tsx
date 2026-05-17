@@ -115,6 +115,25 @@ export const ToolConfirmationQueue: React.FC<ToolConfirmationQueueProps> = ({
           )}
         </Box>
 
+        {/*
+          Phase 4 authority-attribution: when the originating sub-agent is
+          known (e.g., a swarm session like `sonnet-1`), render an explicit
+          "Requested by" line so the user can tell which agent in a swarm
+          is asking for approval — defense-in-depth for the v1.0.1
+          inherited-toolset default. See `design-loop/swarm-design.md`
+          Phase 4.
+        */}
+        {!!tool.subagent && (
+          <Box marginBottom={0}>
+            <Text color={theme.text.secondary}>
+              Requested by sub-agent{' '}
+              <Text color={theme.status.warning} bold>
+                {tool.subagent}
+              </Text>
+            </Text>
+          </Box>
+        )}
+
         {/* Interactive Area */}
         <Box flexDirection="column">
           <ToolConfirmationMessage
@@ -176,6 +195,23 @@ export const ToolConfirmationQueue: React.FC<ToolConfirmationQueueProps> = ({
                 description={tool.description}
                 emphasis="high"
               />
+            </Box>
+          )}
+
+          {/*
+            Phase 4 authority-attribution (non-shell/edit branch). Same
+            rationale as the shell/edit branch above; rendered inside the
+            sticky header so it stays visible while the user scrolls
+            through the body.
+          */}
+          {!hideToolIdentity && !!tool.subagent && (
+            <Box>
+              <Text color={theme.text.secondary}>
+                Requested by sub-agent{' '}
+                <Text color={borderColor} bold>
+                  {tool.subagent}
+                </Text>
+              </Text>
             </Box>
           )}
         </Box>

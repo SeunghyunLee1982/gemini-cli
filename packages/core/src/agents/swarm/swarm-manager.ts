@@ -27,11 +27,13 @@
  *   `AGENT_BUSY` if the target session is already `running`.
  */
 
+import * as fs from 'node:fs';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { Config } from '../../config/config.js';
 import { ToolRegistry } from '../../tools/tool-registry.js';
 import { Kind } from '../../tools/tools.js';
 import { convertToAnthropicTools } from '../anthropic-tools.js';
+import { debugLogger } from '../../utils/debugLogger.js';
 import { SwarmSession } from './swarm-session.js';
 import {
   type SwarmAction,
@@ -98,6 +100,14 @@ export class SwarmManager {
 
   /** Disposer for the app-abort-signal subscription. */
   private appAbortDisposer: (() => void) | undefined;
+
+  /**
+   * Cached shared-workspace directory. Created lazily by
+   * {@link ensureWorkspaceDir} on first `spawn`. Tracked so we don't pay
+   * the `fs.existsSync + mkdirSync` cost on every spawn — the directory
+   * lives for the entire CLI session.
+   */
+  private workspaceDirPath: string | undefined;
 
   constructor(
     config: Config,
@@ -218,6 +228,11 @@ export class SwarmManager {
     // `DEFAULT_SWARM_TOOLS` remains exported as a read-only preset.
     const requestedTools =
       validated.tools ?? parentRegistry.getAllTools().map((t) => t.name);
+
+    // Phase 4: ensure the shared swarm workspace exists before the first
+    // session spawns so agents can `write_file`/`read_file` into it
+    // without races. Idempotent — `ensureWorkspaceDir` caches its work.
+    this.ensureWorkspaceDir();
 
     // Mint the id.
     const agentId = this.mintAgentId(model);
@@ -475,6 +490,53 @@ export class SwarmManager {
    */
   getSessionsForTests(): ReadonlyMap<string, SwarmSession> {
     return this.sessions;
+  }
+
+  /**
+   * Returns the shared-workspace directory path for this session,
+   * creating it on first call. Multiple spawned agents share the same
+   * directory — they read/write artifacts like `<dir>/sonnet-1.md` via
+   * the standard file tools instead of paste-passing everything through
+   * the orchestrator's context. Plan Mode's policy whitelist explicitly
+   * allows writes inside this directory (see
+   * `packages/core/src/policy/policies/plan.toml`).
+   */
+  getWorkspaceDir(): string {
+    this.ensureWorkspaceDir();
+    // `ensureWorkspaceDir` always populates the cache on success; the
+    // non-null assertion is safe because the early-return on failure
+    // falls through to the path computation below.
+    return (
+      this.workspaceDirPath ?? this.config.storage.getProjectTempSwarmDir()
+    );
+  }
+
+  /**
+   * Creates the swarm workspace dir if it doesn't yet exist. Mirrors
+   * `enter-plan-mode.ts`'s strategy: log-and-continue on failure so a
+   * race or sandbox quirk doesn't fail the whole spawn — `write_file`
+   * will surface a more actionable error if the dir genuinely can't be
+   * created.
+   */
+  private ensureWorkspaceDir(): void {
+    if (this.workspaceDirPath) return;
+    const dir = this.config.storage.getProjectTempSwarmDir();
+    try {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      this.workspaceDirPath = dir;
+    } catch (e) {
+      debugLogger.warn(
+        `[SwarmManager] Failed to create swarm workspace dir at ${dir}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      // Best effort: still cache the path so the orchestrator can attempt
+      // writes (which will then fail with a clearer error). Without
+      // caching we'd retry the mkdir on every spawn.
+      this.workspaceDirPath = dir;
+    }
   }
 
   // ---- internals ---------------------------------------------------------

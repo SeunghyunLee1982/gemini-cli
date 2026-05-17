@@ -15,6 +15,7 @@ import {
   type RemoteAgentDefinition,
   DEFAULT_MAX_TURNS,
   DEFAULT_MAX_TIME_MINUTES,
+  ANTHROPIC_MODEL_ALIAS_VALUES,
 } from './types.js';
 import type { A2AAuthConfig } from './auth-provider/types.js';
 import {
@@ -250,10 +251,12 @@ const anthropicAgentSchema = z
     name: nameSchema,
     description: z.string().min(1),
     display_name: z.string().optional(),
-    // Restricted to "sonnet" or "opus" aliases (no version pinning, no
-    // haiku-class). The actual Anthropic model ID is resolved at invocation
-    // time. Personal-branch policy decision; can be relaxed later if needed.
-    model: z.enum(['sonnet', 'opus']).optional().default('sonnet'),
+    // Restricted to the aliases declared in `ANTHROPIC_MODEL_ALIASES`
+    // (currently "sonnet" / "opus" — no version pinning, no haiku-class).
+    // The Zod enum is derived from the alias map so adding a new alias
+    // there immediately widens this schema without a separate edit.
+    // Personal-branch policy; can be relaxed when a swarm use case demands.
+    model: z.enum(ANTHROPIC_MODEL_ALIAS_VALUES).optional().default('sonnet'),
     max_tokens: z.number().int().positive().optional(),
     temperature: z.number().min(0).max(1).optional(),
     tools: z

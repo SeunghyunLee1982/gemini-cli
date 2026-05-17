@@ -25,9 +25,11 @@ import {
 } from './anthropic-loop.js';
 import type { Config } from '../config/config.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
+import type { CompletedToolCall } from '../scheduler/types.js';
 
 const hoisted = vi.hoisted(() => ({
   messagesCreate: vi.fn(),
+  scheduleAgentTools: vi.fn(),
 }));
 
 vi.mock('@anthropic-ai/sdk', () => {
@@ -41,9 +43,15 @@ vi.mock('@anthropic-ai/sdk', () => {
   return { default: FakeAnthropic };
 });
 
+vi.mock('./agent-scheduler.js', () => ({
+  scheduleAgentTools: (...args: unknown[]) =>
+    hoisted.scheduleAgentTools(...args),
+}));
+
 describe('runAnthropicMessageLoop (smoke)', () => {
   beforeEach(() => {
     hoisted.messagesCreate.mockReset();
+    hoisted.scheduleAgentTools.mockReset();
   });
 
   it('returns the assistant text on stop_reason=end_turn and pushes the assistant turn into messages', async () => {
@@ -73,6 +81,128 @@ describe('runAnthropicMessageLoop (smoke)', () => {
     // observe post-call state.
     expect(messages).toHaveLength(2);
     expect(messages[1].role).toBe('assistant');
+  });
+
+  it('drives one tool_use turn through the scheduler, feeds tool_result back, and exits on end_turn', async () => {
+    // First Anthropic call: model asks for one tool_use.
+    hoisted.messagesCreate.mockResolvedValueOnce({
+      content: [
+        { type: 'text', text: 'thinking' },
+        {
+          type: 'tool_use',
+          id: 'tu_1',
+          name: 'read_file',
+          input: { path: 'x.ts' },
+        },
+      ],
+      stop_reason: 'tool_use',
+    });
+    // Second Anthropic call (after tool_result fed back): clean end_turn.
+    hoisted.messagesCreate.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'done' }],
+      stop_reason: 'end_turn',
+    });
+
+    // Scheduler returns a successful CompletedToolCall for tu_1.
+    hoisted.scheduleAgentTools.mockResolvedValueOnce([
+      {
+        status: 'success',
+        request: {
+          callId: 'tu_1',
+          name: 'read_file',
+          args: { path: 'x.ts' },
+          isClientInitiated: false,
+          prompt_id: 'p',
+        },
+        response: {
+          callId: 'tu_1',
+          responseParts: [{ text: 'file contents' }],
+          resultDisplay: undefined,
+          error: undefined,
+          errorType: undefined,
+        },
+      } as unknown as CompletedToolCall,
+    ]);
+
+    const fakeTool = {
+      clone: () => fakeTool,
+      kind: 'other',
+    };
+    const fakeRegistry = {
+      getTool: () => fakeTool,
+    } as unknown as ToolRegistry;
+
+    const messages: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: 'please read x.ts' },
+    ];
+    const text = await runAnthropicMessageLoop({
+      apiKey: 'sk-test',
+      model: 'm',
+      system: 's',
+      anthropicTools: [],
+      messages: messages as never,
+      toolRegistry: fakeRegistry,
+      allowSet: new Set<string>(['read_file']),
+      config: {} as unknown as Config,
+      maxTurns: 3,
+      signal: new AbortController().signal,
+      schedulerPromptId: 'smoke-tool',
+      subagentName: 'sonnet-1',
+    });
+
+    expect(text).toBe('done');
+    // Sequence: user -> assistant(tool_use) -> user(tool_result) -> assistant(end_turn)
+    expect(messages).toHaveLength(4);
+    expect(messages[1].role).toBe('assistant');
+    expect(messages[2].role).toBe('user');
+    expect(messages[3].role).toBe('assistant');
+
+    // Scheduler was called exactly once with the tool_use block routed
+    // through agent-scheduler. We don't pin the full args bag — just
+    // confirm the bookkeeping plumbing was exercised.
+    expect(hoisted.scheduleAgentTools).toHaveBeenCalledTimes(1);
+    expect(hoisted.messagesCreate).toHaveBeenCalledTimes(2);
+
+    // The tool_result block must round-trip the tool_use id so Anthropic's
+    // pairing invariant is preserved.
+    const userResultTurn = messages[2] as { content: unknown };
+    expect(Array.isArray(userResultTurn.content)).toBe(true);
+    const blocks = userResultTurn.content as Array<{
+      type: string;
+      tool_use_id?: string;
+    }>;
+    expect(blocks[0].type).toBe('tool_result');
+    expect(blocks[0].tool_use_id).toBe('tu_1');
+  });
+
+  it('returns the assistant text with a max_tokens note and does not retry', async () => {
+    hoisted.messagesCreate.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'partial answer' }],
+      stop_reason: 'max_tokens',
+    });
+
+    const messages: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: 'big question' },
+    ];
+    const text = await runAnthropicMessageLoop({
+      apiKey: 'sk-test',
+      model: 'm',
+      system: 's',
+      anthropicTools: [],
+      messages: messages as never,
+      toolRegistry: {} as unknown as ToolRegistry,
+      allowSet: new Set<string>(),
+      config: {} as unknown as Config,
+      maxTurns: 3,
+      signal: new AbortController().signal,
+      schedulerPromptId: 'smoke-maxtok',
+      subagentName: 'sonnet-1',
+    });
+
+    expect(text).toContain('partial answer');
+    expect(text).toContain('truncated by max_tokens');
+    // Exactly one Anthropic call — the loop must NOT retry on max_tokens.
+    expect(hoisted.messagesCreate).toHaveBeenCalledTimes(1);
   });
 
   it('throws AbortError when the signal is already aborted before the first call', async () => {

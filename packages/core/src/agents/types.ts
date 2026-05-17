@@ -330,11 +330,49 @@ export const ANTHROPIC_TOOL_RESULT_MAX_CHARS = 49152;
  * time. The bridge enforces no Code Assist / Gemini OAuth on this path.
  */
 /**
- * Aliases accepted in agent frontmatter `model:` field. Resolved to the
- * current Anthropic model ID at invocation time. Haiku-class is intentionally
- * excluded on this branch.
+ * Single source of truth mapping accepted `model:` aliases to the current
+ * Anthropic model IDs. Everything else — the type alias, the Zod enums in
+ * `agentLoader.ts` and `swarm/types.ts`, the JSON-schema mirror in
+ * `swarm/swarm-tool.ts`, and `resolveAnthropicModel` in
+ * `anthropic-invocation.ts` — derives from this map. Adding or removing a
+ * key here propagates everywhere (Phase 4 invariant-locality fix; tested by
+ * `anthropic-models.test.ts`).
+ *
+ * **Maintenance policy:** bump these constants whenever Anthropic ships a new
+ * sonnet- or opus-tier release. As of 2026-05, the latest models are sonnet
+ * 4.6 and opus 4.7. Haiku-class is intentionally excluded on this branch
+ * (personal-branch policy; can be relaxed when a concrete swarm use case
+ * demands a cheap worker).
  */
-export type AnthropicModelAlias = 'sonnet' | 'opus';
+export const ANTHROPIC_MODEL_ALIASES = {
+  sonnet: 'claude-sonnet-4-6',
+  opus: 'claude-opus-4-7',
+} as const satisfies Record<string, string>;
+
+/**
+ * Aliases accepted in agent frontmatter `model:` field. Resolved to the
+ * current Anthropic model ID at invocation time. Derived from
+ * {@link ANTHROPIC_MODEL_ALIASES} so the type, Zod enums, and JSON-schema
+ * mirror can never drift from the runtime map.
+ */
+export type AnthropicModelAlias = keyof typeof ANTHROPIC_MODEL_ALIASES;
+
+/**
+ * Ordered tuple of the accepted alias keys. Used by the Zod schemas to
+ * construct the runtime enum without redeclaring the literal list.
+ *
+ * We hand-author the tuple rather than `Object.keys()`-cast it because
+ * the `@typescript-eslint/no-unsafe-type-assertion` lint correctly
+ * rejects the narrower-than-source cast. The `satisfies` clause below
+ * ties this constant to the alias map at compile time: if either the map
+ * keys or this tuple changes, the satisfies check fails. The runtime
+ * `anthropic-models.test.ts` adds a second belt-and-braces check that
+ * the sorted tuple equals the sorted map keys.
+ */
+export const ANTHROPIC_MODEL_ALIAS_VALUES = [
+  'sonnet',
+  'opus',
+] as const satisfies readonly AnthropicModelAlias[];
 
 export interface AnthropicAgentDefinition<
   TOutput extends z.ZodTypeAny = z.ZodUnknown,

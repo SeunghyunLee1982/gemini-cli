@@ -354,6 +354,23 @@ export class Storage {
     return path.join(this.getProjectTempDir(), 'plans');
   }
 
+  /**
+   * Per-session shared workspace for swarm agents. Sibling of
+   * `getProjectTempPlansDir()`, same lifecycle. The directory is created
+   * lazily by `SwarmTool` registration (or first `spawn`) and torn down
+   * with the session checkpoint. Plan Mode's policy whitelist explicitly
+   * allows `write_file` / `replace` inside this directory so the
+   * orchestrator can use it as a paste-free cross-agent buffer (Phase 4
+   * orchestrator-fatigue mitigation; see `design-loop/swarm-design.md`
+   * Turn 1 / Phase 4).
+   */
+  getProjectTempSwarmDir(): string {
+    if (this.sessionId) {
+      return path.join(this.getProjectTempDir(), this.sessionId, 'swarm');
+    }
+    return path.join(this.getProjectTempDir(), 'swarm');
+  }
+
   getProjectTempTrackerDir(): string {
     if (this.sessionId) {
       return path.join(this.getProjectTempDir(), this.sessionId, 'tracker');

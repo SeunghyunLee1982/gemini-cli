@@ -21,6 +21,7 @@ import {
   type SubagentProgress,
   SubagentState,
   DEFAULT_ANTHROPIC_MAX_TURNS,
+  ANTHROPIC_MODEL_ALIASES,
 } from './types.js';
 import { type AgentLoopContext } from '../config/agent-loop-context.js';
 import type { MessageBus } from '../confirmation-bus/message-bus.js';
@@ -36,21 +37,14 @@ import {
 const DEFAULT_MAX_TOKENS = 4096;
 
 /**
- * Resolves an agent's `model` alias to a concrete Anthropic model ID. The
- * alias surface (`sonnet` / `opus`) is intentionally narrow so that agent
- * definitions never pin a specific model version.
- *
- * **Maintenance policy:** bump these constants whenever Anthropic ships a new
- * sonnet- or opus-tier release. As of 2026-05, the latest models are sonnet
- * 4.6 and opus 4.7. We deliberately do NOT set the `anthropic-beta: context-1m-*`
- * header — matches the Claude Code CLI default behavior, which exposes opus
- * 4.7's 1M context window on the standard endpoint without an opt-in header.
+ * Resolves an agent's `model` alias to a concrete Anthropic model ID via
+ * the single source-of-truth map in `./types.ts`. The alias surface
+ * (`sonnet` / `opus`) is intentionally narrow so agent definitions never
+ * pin a specific model version. We deliberately do NOT set the
+ * `anthropic-beta: context-1m-*` header — matches the Claude Code CLI
+ * default, which exposes opus 4.7's 1M context window on the standard
+ * endpoint without an opt-in header.
  */
-const ANTHROPIC_MODEL_ALIASES: Record<AnthropicModelAlias, string> = {
-  sonnet: 'claude-sonnet-4-6',
-  opus: 'claude-opus-4-7',
-};
-
 export function resolveAnthropicModel(alias: AnthropicModelAlias): string {
   return ANTHROPIC_MODEL_ALIASES[alias];
 }

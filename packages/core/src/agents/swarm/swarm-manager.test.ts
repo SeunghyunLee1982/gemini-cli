@@ -121,6 +121,14 @@ function makeFakeConfig(
     getAppAbortSignal: () => appSignal,
     getGlobalAppBus: () => bus,
     getToolRegistry: () => parentRegistry,
+    // Phase 4: SwarmManager.spawn ensures the per-session shared workspace
+    // dir. Tests run with a stub path under the OS temp tree; the manager
+    // creates the dir on first spawn and swallows mkdir errors so this
+    // path being absent on the filesystem is harmless for the test.
+    storage: {
+      getProjectTempSwarmDir: () =>
+        `${process.cwd()}/.gemini/tmp/test-session/swarm`,
+    },
   } as unknown as Config;
   return { config, globalBus: bus, appController };
 }

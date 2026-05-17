@@ -39,6 +39,7 @@ import {
   type SwarmAction,
   type SwarmResult,
 } from './types.js';
+import { ANTHROPIC_MODEL_ALIAS_VALUES } from '../types.js';
 import { SwarmManager } from './swarm-manager.js';
 
 /**
@@ -61,6 +62,9 @@ export type SwarmActionParams = SwarmAction;
  * JSON-schema representation of the discriminated union for the LLM tool
  * declaration. Hand-mirrored from `SwarmActionSchema` rather than generated
  * to keep dependencies light and the schema human-readable in PR diffs.
+ * The `model` enum is built from `ANTHROPIC_MODEL_ALIAS_VALUES` (Phase 4
+ * invariant-locality fix) so adding a new alias to the source-of-truth
+ * map in `../types.ts` propagates here automatically.
  */
 const SWARM_JSON_SCHEMA = {
   type: 'object',
@@ -71,7 +75,7 @@ const SWARM_JSON_SCHEMA = {
       properties: {
         action: { type: 'string', const: 'spawn' },
         kind: { type: 'string', enum: ['anthropic'] },
-        model: { type: 'string', enum: ['sonnet', 'opus'] },
+        model: { type: 'string', enum: [...ANTHROPIC_MODEL_ALIAS_VALUES] },
         system_prompt: { type: 'string' },
         tools: { type: 'array', items: { type: 'string' } },
         max_turns: { type: 'integer', minimum: 1 },

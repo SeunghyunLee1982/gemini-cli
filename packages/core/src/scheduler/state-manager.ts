@@ -53,6 +53,12 @@ export class SchedulerStateManager {
     private readonly messageBus: MessageBus,
     private readonly schedulerId: string = ROOT_SCHEDULER_ID,
     private readonly onTerminalCall?: TerminalCallHandler,
+    /**
+     * Display name of the sub-agent owning this scheduler. Stamped on every
+     * `WaitingToolCall` so the UI can attribute approvals to the correct
+     * sub-agent (e.g., `sonnet-1`) — Phase 4 authority-attribution fix.
+     */
+    private readonly subagent?: string,
   ) {}
 
   addToolCalls(calls: ToolCall[]): void {
@@ -425,6 +431,10 @@ export class SchedulerStateManager {
       invocation: call.invocation,
       schedulerId: call.schedulerId,
       approvalMode: call.approvalMode,
+      // Phase 4 authority-attribution: stamp the originating sub-agent
+      // name (e.g., `sonnet-1`) on every WaitingToolCall so the UI can
+      // render "Requested by <agent_id>" in the confirmation modal.
+      subagent: this.subagent,
     };
   }
 

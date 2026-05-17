@@ -127,10 +127,31 @@ priority = 70
 modes = ["plan"]
 argsPattern = "\\x00\"file_path\":\"[^\"]+[\\\\/]+\\.gemini[\\\\/]+tmp[\\\\/]+[\\w-]+[\\\\/]+plans[\\\\/]+[\\w-]+\\.md\"\\x00"
 
+# Allow write_file and replace for any file in the swarm shared workspace
+# directory (Phase 4 orchestrator-fatigue mitigation). Mirrors the plans/
+# rules exactly so the swarm workspace gets the same plan-mode treatment:
+# sibling of plans/, same lifecycle, but free-form filenames so each agent
+# can write to `<dir>/<their-name>.md` (or arbitrary scratch files) without
+# the plan-mode catch-all denying. Two rules to handle the with- and
+# without-session-id path layouts.
+[[rule]]
+toolName = ["write_file", "replace"]
+decision = "allow"
+priority = 70
+modes = ["plan"]
+argsPattern = "\\x00\"file_path\":\"[^\"]+[\\\\/]+\\.gemini[\\\\/]+tmp[\\\\/]+[\\w-]+[\\\\/]+swarm[\\\\/]+[^\"]+\"\\x00"
+
+[[rule]]
+toolName = ["write_file", "replace"]
+decision = "allow"
+priority = 70
+modes = ["plan"]
+argsPattern = "\\x00\"file_path\":\"[^\"]+[\\\\/]+\\.gemini[\\\\/]+tmp[\\\\/]+[\\w-]+[\\\\/]+[\\w-]+[\\\\/]+swarm[\\\\/]+[^\"]+\"\\x00"
+
 # Explicitly Deny other write operations in Plan mode with a clear message.
 [[rule]]
 toolName = ["write_file", "replace"]
 decision = "deny"
 priority = 65
 modes = ["plan"]
-denyMessage = "You are in Plan Mode and cannot modify source code. You may ONLY use write_file or replace to save plans to the designated plans directory as .md files."
+denyMessage = "You are in Plan Mode and cannot modify source code. You may ONLY use write_file or replace to save plans to the designated plans directory as .md files, or to share scratch artifacts in the swarm workspace directory."

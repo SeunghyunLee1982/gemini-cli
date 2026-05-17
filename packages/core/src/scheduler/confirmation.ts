@@ -119,6 +119,17 @@ export async function resolveConfirmation(
     onWaitingForConfirmation?: (waiting: boolean) => void;
     systemMessage?: string;
     forcedDecision?: ForcedToolDecision;
+    /**
+     * Display name of the sub-agent that originated this tool call, if any.
+     * When set, the modal renders an unambiguous "Requested by <subagent>"
+     * line so the user can tell which agent in a swarm is asking. Phase 4
+     * authority-attribution fix: the publication payload already carries
+     * `subagent` to the policy engine via `MessageBus.derive`, but the UI
+     * was inferring the requester from the parent CLI rather than the
+     * actual sub-agent id (e.g., `sonnet-1` vs `opus-1`). See
+     * `design-loop/swarm-design.md` Phase 4.
+     */
+    subagent?: string;
   },
 ): Promise<ResolutionResult> {
   const { state, onWaitingForConfirmation } = deps;
