@@ -1153,7 +1153,7 @@ auth:
 kind: anthropic
 name: helper
 description: Helper.
-model: claude-haiku-4-5
+model: sonnet
 tools:
   - read_file
   - grep_search
@@ -1165,7 +1165,7 @@ You are a helper.`);
       expect(parsed[0]).toMatchObject({
         kind: 'anthropic',
         name: 'helper',
-        model: 'claude-haiku-4-5',
+        model: 'sonnet',
         tools: ['read_file', 'grep_search'],
         max_turns: 8,
         system_prompt: 'You are a helper.',
@@ -1177,7 +1177,7 @@ You are a helper.`);
 kind: anthropic
 name: chat
 description: Chatty.
-model: claude-haiku-4-5
+model: sonnet
 ---
 Hi.`);
       const parsed = await parseAgentMarkdown(filePath);
@@ -1195,7 +1195,7 @@ Hi.`);
 kind: anthropic
 name: bad
 description: Bad.
-model: claude-haiku-4-5
+model: sonnet
 tools:
   - this_is_not_a_real_tool
 ---
@@ -1210,7 +1210,7 @@ tools:
 kind: anthropic
 name: wild
 description: Wildcard.
-model: claude-haiku-4-5
+model: sonnet
 tools:
   - "*"
 ---
@@ -1225,7 +1225,7 @@ tools:
 kind: anthropic
 name: zero
 description: Zero turns.
-model: claude-haiku-4-5
+model: sonnet
 max_turns: 0
 ---
 .`);
@@ -1239,7 +1239,7 @@ max_turns: 0
 kind: anthropic
 name: huge
 description: Huge.
-model: claude-haiku-4-5
+model: sonnet
 max_turns: 100
 ---
 .`);
@@ -1255,7 +1255,7 @@ max_turns: 100
       const filePath = await writeAgentMarkdown(`---
 name: nokind
 description: No kind.
-model: claude-haiku-4-5
+model: sonnet
 tools:
   - read_file
 ---
@@ -1292,7 +1292,7 @@ tools:
 kind: anthropic
 name: passthrough
 description: Pass-through.
-model: claude-haiku-4-5
+model: sonnet
 tools:
   - read_file
 max_turns: 7

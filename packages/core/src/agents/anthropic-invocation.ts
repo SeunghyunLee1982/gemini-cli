@@ -18,6 +18,7 @@ import {
 import {
   type AgentInputs,
   type AnthropicAgentDefinition,
+  type AnthropicModelAlias,
   type SubagentProgress,
   SubagentState,
   DEFAULT_ANTHROPIC_MAX_TURNS,
@@ -37,6 +38,26 @@ import {
 import { debugLogger } from '../utils/debugLogger.js';
 
 const DEFAULT_MAX_TOKENS = 4096;
+
+/**
+ * Resolves an agent's `model` alias to a concrete Anthropic model ID. The
+ * alias surface (`sonnet` / `opus`) is intentionally narrow so that agent
+ * definitions never pin a specific model version.
+ *
+ * **Maintenance policy:** bump these constants whenever Anthropic ships a new
+ * sonnet- or opus-tier release. As of 2026-05, the latest models are sonnet
+ * 4.6 and opus 4.7. We deliberately do NOT set the `anthropic-beta: context-1m-*`
+ * header — matches the Claude Code CLI default behavior, which exposes opus
+ * 4.7's 1M context window on the standard endpoint without an opt-in header.
+ */
+const ANTHROPIC_MODEL_ALIASES: Record<AnthropicModelAlias, string> = {
+  sonnet: 'claude-sonnet-4-6',
+  opus: 'claude-opus-4-7',
+};
+
+export function resolveAnthropicModel(alias: AnthropicModelAlias): string {
+  return ANTHROPIC_MODEL_ALIASES[alias];
+}
 
 const SOFT_REJECT_SUFFIX =
   '\n\nIf a tool call is rejected by the user, acknowledge the rejection, ' +
@@ -195,7 +216,7 @@ export class AnthropicAgentInvocation extends BaseToolInvocation<
     try {
       const response = await client.messages.create(
         {
-          model: this.definition.model,
+          model: resolveAnthropicModel(this.definition.model),
           max_tokens: this.definition.max_tokens ?? DEFAULT_MAX_TOKENS,
           temperature: this.definition.temperature,
           system: this.definition.system_prompt,
@@ -313,7 +334,7 @@ export class AnthropicAgentInvocation extends BaseToolInvocation<
 
         const resp = await client.messages.create(
           {
-            model: this.definition.model,
+            model: resolveAnthropicModel(this.definition.model),
             max_tokens: this.definition.max_tokens ?? DEFAULT_MAX_TOKENS,
             temperature: this.definition.temperature,
             system,

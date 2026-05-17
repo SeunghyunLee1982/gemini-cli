@@ -250,7 +250,10 @@ const anthropicAgentSchema = z
     name: nameSchema,
     description: z.string().min(1),
     display_name: z.string().optional(),
-    model: z.string().min(1),
+    // Restricted to "sonnet" or "opus" aliases (no version pinning, no
+    // haiku-class). The actual Anthropic model ID is resolved at invocation
+    // time. Personal-branch policy decision; can be relaxed later if needed.
+    model: z.enum(['sonnet', 'opus']).optional().default('sonnet'),
     max_tokens: z.number().int().positive().optional(),
     temperature: z.number().min(0).max(1).optional(),
     tools: z

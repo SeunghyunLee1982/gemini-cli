@@ -82,11 +82,14 @@ git config --global alias.pr-branch \
    upstream as PR #27137. Will become a no-op on `personal` once upstream merges
    and we rebase.
 5. `feat(agents): add anthropic agent kind` — adds `kind: anthropic` to the
-   agent registry so `.claude/agents/*.md` can declare Claude-backed sub-agents
-   (e.g., `model: claude-haiku-4-5`). Backed by `@anthropic-ai/sdk` in-process.
-   Single-shot path (no `tools` field) is the v0 baseline; the `tools` /
-   `max_turns` fields enable v1's tool-use loop. ToS-clean: `ANTHROPIC_API_KEY`
-   only, no Google OAuth involved.
+   agent registry so `.claude/agents/*.md` can declare Claude-backed sub-agents.
+   The `model:` field accepts the aliases `sonnet` and `opus` (haiku-class
+   intentionally excluded on `personal`); the bridge resolves the alias to a
+   concrete Anthropic model ID at invocation time so definitions never pin a
+   version. Backed by `@anthropic-ai/sdk` in-process. Single-shot path (no
+   `tools` field) is the v0 baseline; the `tools` / `max_turns` fields enable
+   v1's tool-use loop. ToS-clean: `ANTHROPIC_API_KEY` only, no Google OAuth
+   involved.
 
 ### Anthropic sub-agent example
 
@@ -97,7 +100,7 @@ git config --global alias.pr-branch \
 kind: anthropic
 name: my-helper
 description: A Claude-backed helper. Use for X.
-model: claude-haiku-4-5
+model: sonnet
 max_tokens: 2048
 temperature: 0.7
 ---
@@ -112,7 +115,7 @@ You are a helpful assistant. Reply with...
 kind: anthropic
 name: my-investigator
 description: A read-only Claude investigator.
-model: claude-haiku-4-5
+model: sonnet
 tools:
   - read_file
   - grep_search

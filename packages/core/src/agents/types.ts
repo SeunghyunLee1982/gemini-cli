@@ -329,12 +329,19 @@ export const ANTHROPIC_TOOL_RESULT_MAX_CHARS = 49152;
  * Authentication is taken from `process.env.ANTHROPIC_API_KEY` at invocation
  * time. The bridge enforces no Code Assist / Gemini OAuth on this path.
  */
+/**
+ * Aliases accepted in agent frontmatter `model:` field. Resolved to the
+ * current Anthropic model ID at invocation time. Haiku-class is intentionally
+ * excluded on this branch.
+ */
+export type AnthropicModelAlias = 'sonnet' | 'opus';
+
 export interface AnthropicAgentDefinition<
   TOutput extends z.ZodTypeAny = z.ZodUnknown,
 > extends BaseAgentDefinition<TOutput> {
   kind: 'anthropic';
-  /** Anthropic model identifier, e.g., 'claude-haiku-4-5', 'claude-opus-4-7'. */
-  model: string;
+  /** Model alias — resolved to a concrete Anthropic model ID at runtime. */
+  model: AnthropicModelAlias;
   /** System prompt (markdown body of the agent definition file). */
   system_prompt: string;
   /** Max output tokens (defaults to a conservative value if unset). */

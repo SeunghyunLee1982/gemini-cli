@@ -113,7 +113,7 @@ const baseDefinition: AnthropicAgentDefinition = {
   name: 'tester',
   displayName: 'Tester',
   description: 'A test anthropic agent.',
-  model: 'claude-haiku-4-5',
+  model: 'sonnet',
   system_prompt: 'You are a tester.',
   inputConfig: { inputSchema: { type: 'object', properties: {} } },
 };
