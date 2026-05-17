@@ -68,3 +68,8 @@ temp_agents/
 
 # conductor extension and planning directories
 conductor/
+
+# Design-loop discussion artifacts (R-round briefings, model responses)
+# Only swarm-north-star.md is tracked (force-added).
+design-loop/*
+!design-loop/swarm-north-star.md

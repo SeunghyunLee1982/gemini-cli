@@ -146,6 +146,13 @@ automatically from `.env` at or above the workspace).
 
 ## Swarm v1.0 (experimental)
 
+> **North star (LOCKED 2026-05-17):** see `design-loop/swarm-north-star.md`.
+> 모든 후속 변경은 그 문서를 reference. 권한 모델 = `PolicyRule[]` capability
+>
+> - 5-tier policy bands (user ceiling 수학적으로 dominant) + `BehaviorConfig`
+>   결정론적 runtime monitor + v3 에서 `agent.spawn` 으로 통합. 이 섹션은 v1.0
+>   (= Phase 5, commit `ab572fa3c`) 의 **현재 shipped 상태** 설명.
+
 Persistent agent swarms let the main Gemini agent spawn long-lived Claude
 sub-agent instances, send them multiple messages across orchestrator turns
 (retaining session state), and release them. Unlike `kind: anthropic` sub-agents
