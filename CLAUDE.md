@@ -177,21 +177,45 @@ When enabled, the orchestrator gains a single `swarm` tool with a discriminated
 | `list`    | —                    | Snapshot of all live sessions                 |
 
 `spawn` also accepts optional `model` (`sonnet` / `opus`, default `sonnet`),
-`tools` (defaults to the read-only whitelist), `max_turns` (default 5), and
-`display_name`.
+`tools` (defaults to the read-only whitelist), `max_turns` (default 5),
+`display_name`, and (Phase 5) `role` (≤80 chars) / `charter` (≤200 chars) —
+short self-descriptive labels that show up in `list` / `swarm_status` and are
+woven into the session's system prompt so the sub-agent knows what hat it's
+wearing.
+
+The `message` result has two status fields (Phase 5 split):
+
+- `status: 'ok' | 'message_turn_cap_reached'` — message-outcome status.
+  Cap-reached means the loop hit its `max_turns` budget without an `end_turn`;
+  the session is **still alive** and the orchestrator can send a `"continue"`
+  message or release it.
+- `session_status: 'idle' | 'running' | 'released' | 'error'` — session
+  lifecycle status (always `idle` after a normal return, including cap).
+
+### Read-only companion tool: `swarm_status`
+
+In addition to the action-discriminated `swarm` tool, the orchestrator and every
+spawned sub-agent get a read-only `swarm_status` tool that returns a snapshot:
+live `agents[]` (with `role`, `charter`, `status`, `turn_count`,
+`seconds_since_active`), the shared `workspace_dir`, and `recent_events[]` (up
+to 50, newest first). Use it at the start of any non-trivial sub-agent turn to
+see who else is on the team. The tool is `Kind.Other` (not `Kind.Agent`), so
+sub-agents inherit it through the swarm-manager's per-tool filter without being
+granted the full spawn/message/release surface.
 
 ### Defaults
 
 - **Tools.** Inherits the orchestrator's currently-registered toolset by default
   (mirrors Claude Code's Task tool). Agent-kind tools are filtered out to
-  prevent recursive spawn. Wildcards are not allowed. Pass an explicit
-  `tools: [...]` array on `spawn` to narrow the set — for example, the original
-  read-only preset is
-  `['read_file', 'grep_search', 'glob', 'list_directory', 'read_many_files']`
-  (exported as `DEFAULT_SWARM_TOOLS`). Note: this default relies on v1.0's
-  strictly synchronous `message` (only one agent runs at a time) to avoid
-  concurrent-write races; v1.1 (async) must revisit before shipping parallel
-  execution.
+  prevent recursive spawn, and `enter_plan_mode` / `exit_plan_mode` are filtered
+  out unconditionally (Phase 5 — mode-control state belongs to the host CLI).
+  Wildcards are not allowed. Pass an explicit `tools: [...]` array on `spawn` to
+  narrow the set — for example, the read-only preset is
+  `['read_file', 'grep_search', 'glob', 'list_directory', 'read_many_files', 'swarm_status']`
+  (exported as `DEFAULT_SWARM_TOOLS`; Phase 5 added `swarm_status`). Note: this
+  default relies on v1.0's strictly synchronous `message` (only one agent runs
+  at a time) to avoid concurrent-write races; v1.1 (async) must revisit before
+  shipping parallel execution.
 - **Idle TTL.** 30 minutes since last activity. Stale sessions are swept on a
   background timer. Sessions wedged in `running` past `2 * TTL` are aborted,
   marked `error`, and left in `list()` for debugging — the user must call
@@ -207,13 +231,25 @@ sessions die with the parent CLI process. Single discriminated tool. No async or
 budget caps in v1 — those are v1.1+. A **shared workspace directory** is created
 automatically (see below).
 
-### Shared workspace directory (Phase 4)
+### Shared workspace directory (Phase 4) + `state.md` convention (Phase 5)
 
 `SwarmManager` lazily creates a per-session shared scratch directory at
 `<project>/.gemini/tmp/<session-id>/swarm/` on first `spawn`. The directory is
 the sibling of `plans/` (same lifecycle, same tier in the tempfile tree). All
 spawned agents in the current CLI session see the same directory through their
 standard file tools (`write_file`, `read_file`, etc.).
+
+Phase 5 introduces a lightweight convention on top of the directory:
+
+- `<agent_id>.md` — per-agent artifact files (free-form, written by each agent).
+- `state.md` — append-only narrative log. After substantive work, an agent
+  should append a one-line entry prefixed with `[<agent_id> @ <iso-timestamp>]`
+  summarizing what it did. This is taught to each session via the auto-appended
+  swarm-protocol block in its system prompt.
+
+The protocol block also tells sub-agents to call `swarm_status()` to
+self-discover peers rather than relying on the orchestrator to re-inject context
+each turn.
 
 **Plan Mode compatibility.** Plan Mode's policy whitelist explicitly allows
 `write_file` and `replace` inside the swarm dir (mirrors the existing plans-dir

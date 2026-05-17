@@ -39,13 +39,22 @@ import {
   type SwarmAction,
   type SwarmResult,
   type SwarmSessionSummary,
+  type SwarmStatusAgentEntry,
+  type SwarmStatusEventEntry,
+  type SwarmStatusSnapshot,
   SwarmSessionStatus,
   SwarmErrorCode,
   SwarmActionSchema,
   DEFAULT_SWARM_MAX_TURNS,
   DEFAULT_SWARM_IDLE_TTL_MS,
+  SWARM_STATUS_EVENT_RING_SIZE,
+  SWARM_STATUS_TOOL_NAME,
 } from './types.js';
 import type { AnthropicModelAlias } from '../types.js';
+import {
+  ENTER_PLAN_MODE_TOOL_NAME,
+  EXIT_PLAN_MODE_TOOL_NAME,
+} from '../../tools/definitions/base-declarations.js';
 
 /**
  * Telemetry event emitted on the global app bus for spawn/message/release.
@@ -70,6 +79,23 @@ export const SWARM_ACTIVITY_EVENT_NAME = 'swarm-activity';
  * long enough that the timer isn't a meaningful CPU cost.
  */
 const SWEEP_INTERVAL_DIVISOR = 6;
+
+/**
+ * Tools sub-agents never receive, regardless of whether the parent
+ * registry advertises them. Mode-control state (Plan Mode) is host-CLI
+ * state — letting a sub-agent toggle it would either confuse the
+ * orchestrator's mode (sub-agent flips it during a turn) or have no
+ * effect at all (the sub-agent's "mode" doesn't propagate back), so we
+ * just filter them out at spawn. Phase 5 addition.
+ *
+ * Names come directly from the source-of-truth tool-name constants so a
+ * rename of `enter_plan_mode` / `exit_plan_mode` propagates here without
+ * a separate edit (post-review drift guard).
+ */
+const SWARM_BLOCKED_TOOL_NAMES: ReadonlySet<string> = new Set([
+  ENTER_PLAN_MODE_TOOL_NAME,
+  EXIT_PLAN_MODE_TOOL_NAME,
+]);
 
 /**
  * Singleton manager of all live `SwarmSession` instances.
@@ -108,6 +134,14 @@ export class SwarmManager {
    * lives for the entire CLI session.
    */
   private workspaceDirPath: string | undefined;
+
+  /**
+   * In-memory ring buffer of recent spawn/message/release events for the
+   * `swarm_status` snapshot. Oldest-to-newest insertion order; trimmed to
+   * {@link SWARM_STATUS_EVENT_RING_SIZE} on every push. v1.0 deliberately
+   * has no on-disk persistence (rejected — see brief's "Out of scope").
+   */
+  private readonly recentEvents: SwarmStatusEventEntry[] = [];
 
   constructor(
     config: Config,
@@ -226,8 +260,19 @@ export class SwarmManager {
     // must revisit this default before allowing concurrent execution.
     // Users can still narrow the set per-spawn via `tools: [...]`;
     // `DEFAULT_SWARM_TOOLS` remains exported as a read-only preset.
-    const requestedTools =
+    //
+    // Phase 5: on the inherit-all path (no explicit `tools` field), make
+    // sure `swarm_status` is in the requested list so peer self-discovery
+    // works out of the box. When the user explicitly passes a `tools`
+    // array, respect their choice — they may have deliberately omitted it.
+    const inheritAll = validated.tools === undefined;
+    const baseRequested =
       validated.tools ?? parentRegistry.getAllTools().map((t) => t.name);
+    const requestedTools = inheritAll
+      ? baseRequested.includes(SWARM_STATUS_TOOL_NAME)
+        ? baseRequested
+        : [...baseRequested, SWARM_STATUS_TOOL_NAME]
+      : baseRequested;
 
     // Phase 4: ensure the shared swarm workspace exists before the first
     // session spawns so agents can `write_file`/`read_file` into it
@@ -244,11 +289,14 @@ export class SwarmManager {
     const sessionBus = globalBus.derive(sessionBusName);
 
     // Build the isolated tool registry. Mirrors `local-executor.ts:164-205`.
+    // Phase 5: also drops any tool in `SWARM_BLOCKED_TOOL_NAMES` (plan-mode
+    // controls) regardless of how it arrived in `requestedTools`.
     const sessionToolRegistry = new ToolRegistry(this.config, sessionBus);
     const allowSet = new Set<string>();
     for (const name of requestedTools) {
       const tool = parentRegistry.getTool(name);
       if (!tool || tool.kind === Kind.Agent) continue;
+      if (SWARM_BLOCKED_TOOL_NAMES.has(tool.name)) continue;
       sessionToolRegistry.registerTool(tool.clone(sessionBus));
       allowSet.add(name);
     }
@@ -286,12 +334,21 @@ export class SwarmManager {
       model,
       systemPrompt: validated.system_prompt,
       displayName: validated.display_name,
+      // Phase 5: pull-through role/charter so they're visible on
+      // `swarm_status`, baked into the session's system prompt, and
+      // surfaced by `list()`.
+      role: validated.role,
+      charter: validated.charter,
       allowedTools: Array.from(allowSet),
       maxTurns,
       config: this.config,
       messageBus: sessionBus,
       toolRegistry: sessionToolRegistry,
       abortController: sessionAbort,
+      // The shared workspace dir is fixed at spawn — `getWorkspaceDir()`
+      // is idempotent (cached) and the directory's identity doesn't
+      // change across the CLI session.
+      workspaceDir: this.getWorkspaceDir(),
       anthropicTools,
       allowSet,
       detachAppAbort,
@@ -343,7 +400,11 @@ export class SwarmManager {
     // recently" rather than only "last successful turn finished".
     session.lastActiveAt = startedAt;
     try {
-      const response = await session.runTurn(args.prompt);
+      // Phase 5: runTurn now returns `{ text, capReached }`. Cap-reached
+      // is a normal end-of-turn (session stays alive at `idle`), surfaced
+      // to the orchestrator via the message-outcome `status` field.
+      // Telemetry stays unchanged — `error` is reserved for genuine errors.
+      const { text, capReached } = await session.runTurn(args.prompt);
       session.status = SwarmSessionStatus.IDLE;
       session.lastActiveAt = Date.now();
       this.publishActivity({
@@ -353,7 +414,13 @@ export class SwarmManager {
         turnCount: session.turnCount,
         durationMs: Date.now() - startedAt,
       });
-      return { ok: true, action: 'message', response, status: session.status };
+      return {
+        ok: true,
+        action: 'message',
+        response: text,
+        status: capReached ? 'message_turn_cap_reached' : 'ok',
+        session_status: session.status,
+      };
     } catch (err) {
       session.status = SwarmSessionStatus.ERROR;
       session.lastActiveAt = Date.now();
@@ -493,6 +560,46 @@ export class SwarmManager {
   }
 
   /**
+   * Builds the payload returned by the `swarm_status` tool. Aggregates the
+   * live sessions, the shared workspace path, and the in-memory event ring
+   * into a single snake_case JSON shape the LLM can act on directly.
+   *
+   * `callerAgentId` echoes back the calling sub-agent's id (resolved from
+   * the message-bus name in the tool invocation) so it can tell at a
+   * glance which entry in `agents[]` is itself. Pass `undefined` for
+   * orchestrator-side calls.
+   *
+   * `recent_events` is reversed so newest events come first — the most
+   * likely consumer (a sub-agent skimming the top of the snapshot) cares
+   * about "what just happened" more than ancient history.
+   */
+  getSwarmStatusSnapshot(callerAgentId?: string): SwarmStatusSnapshot {
+    const now = Date.now();
+    const agents: SwarmStatusAgentEntry[] = [];
+    for (const s of this.sessions.values()) {
+      agents.push({
+        agent_id: s.agentId,
+        role: s.role,
+        charter: s.charter,
+        status: s.status,
+        model: s.model,
+        turn_count: s.turnCount,
+        last_active_at: s.lastActiveAt,
+        // Floor to whole seconds so the JSON stays readable for the LLM
+        // and so test snapshots aren't sensitive to sub-second jitter.
+        seconds_since_active: Math.floor((now - s.lastActiveAt) / 1000),
+      });
+    }
+    return {
+      self_agent_id: callerAgentId,
+      agents,
+      workspace_dir: this.getWorkspaceDir(),
+      // Ring is stored oldest-to-newest; reverse for newest-first ergonomics.
+      recent_events: [...this.recentEvents].reverse(),
+    };
+  }
+
+  /**
    * Returns the shared-workspace directory path for this session,
    * creating it on first call. Multiple spawned agents share the same
    * directory — they read/write artifacts like `<dir>/sonnet-1.md` via
@@ -578,6 +685,10 @@ export class SwarmManager {
       isSwarmActivityEvent: true,
       ...partial,
     };
+    // Phase 5: also mirror into the in-memory ring so `swarm_status` can
+    // surface recent activity to sub-agents. We append first so that even
+    // if `emit` throws (it shouldn't), the ring stays consistent.
+    this.appendEventToRing(event);
     // EventEmitter-level publish. We deliberately don't pipe this through
     // the strongly-typed `MessageBus.publish` channel because that path is
     // for tool-confirmation traffic; swarm activity is a fire-and-forget
@@ -586,6 +697,29 @@ export class SwarmManager {
       this.config.getGlobalAppBus().emit(SWARM_ACTIVITY_EVENT_NAME, event);
     } catch {
       // Telemetry must never break the manager.
+    }
+  }
+
+  /**
+   * Pushes the snake_case projection of a {@link SwarmActivityEvent} onto
+   * the {@link recentEvents} ring, trimming the oldest entry when the ring
+   * exceeds {@link SWARM_STATUS_EVENT_RING_SIZE}.
+   *
+   * Stored oldest-to-newest internally; `getSwarmStatusSnapshot` reverses
+   * to newest-first for the LLM-facing payload.
+   */
+  private appendEventToRing(event: SwarmActivityEvent): void {
+    const entry: SwarmStatusEventEntry = {
+      ts: Date.now(),
+      action: event.action,
+      agent_id: event.agentId,
+      turn_count: event.turnCount,
+      duration_ms: event.durationMs,
+      error: event.error,
+    };
+    this.recentEvents.push(entry);
+    while (this.recentEvents.length > SWARM_STATUS_EVENT_RING_SIZE) {
+      this.recentEvents.shift();
     }
   }
 }

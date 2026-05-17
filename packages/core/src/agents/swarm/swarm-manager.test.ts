@@ -21,8 +21,19 @@ import type { Config } from '../../config/config.js';
 
 // ---- mocks ---------------------------------------------------------------
 
+// Phase 5: the shared loop now returns `{ text, capReached }`. Most tests
+// only care about the text and ignore cap-reached; a dedicated test below
+// asserts that `capReached: true` round-trips into the new
+// `message_turn_cap_reached` outcome status. The default mock impl wraps
+// bare-string `mockResolvedValueOnce` calls into the new shape so existing
+// tests keep working without changes.
 const hoisted = vi.hoisted(() => ({
-  runLoop: vi.fn<(p: { messages: unknown[] }) => Promise<string>>(),
+  runLoop:
+    vi.fn<
+      (p: {
+        messages: unknown[];
+      }) => Promise<string | { text: string; capReached: boolean }>
+    >(),
   // Stub ToolRegistry instances so we can inspect them in assertions if
   // needed.
   registries: [] as unknown[],
@@ -34,7 +45,11 @@ vi.mock('../anthropic-loop.js', async () => {
   );
   return {
     ...actual,
-    runAnthropicMessageLoop: (p: { messages: unknown[] }) => hoisted.runLoop(p),
+    runAnthropicMessageLoop: async (p: { messages: unknown[] }) => {
+      const raw = await hoisted.runLoop(p);
+      if (typeof raw === 'string') return { text: raw, capReached: false };
+      return raw;
+    },
   };
 });
 
@@ -546,12 +561,174 @@ describe('SwarmManager', () => {
       ok: true,
       action: 'message',
       response: 'hello back',
-      status: SwarmSessionStatus.IDLE,
+      // Phase 5: split into message-outcome `status` + lifecycle
+      // `session_status`. Non-cap turn → status='ok', session lives.
+      status: 'ok',
+      session_status: SwarmSessionStatus.IDLE,
     });
     const session = mgr.getSessionsForTests().get(spawn.agent_id)!;
     expect(session.turnCount).toBe(1);
     expect(session.messages.length).toBeGreaterThan(0);
     mgr.shutdownForTests();
     delete process.env['ANTHROPIC_API_KEY'];
+  });
+
+  // ===== Phase 5 additions =================================================
+
+  it('Phase 5 — plan-mode tools are filtered out of the session toolset even when explicitly requested', async () => {
+    // Parent registry advertises enter_plan_mode/exit_plan_mode (Kind.Plan
+    // upstream; here we just give them the right name with Kind.Other so
+    // the per-Kind agent filter doesn't catch them by accident). The
+    // swarm-specific blocklist must drop them regardless.
+    const tools = [
+      makeTool('read_file'),
+      makeTool('enter_plan_mode', Kind.Other),
+      makeTool('exit_plan_mode', Kind.Other),
+    ];
+    const { config } = makeFakeConfig({ tools });
+    const mgr = new SwarmManager(config, { startSweep: false });
+    const spawn = await mgr.spawn({
+      action: 'spawn',
+      system_prompt: 'p',
+      tools: ['read_file', 'enter_plan_mode', 'exit_plan_mode'],
+    });
+    if (!spawn.ok || spawn.action !== 'spawn') throw new Error('unreachable');
+    const session = mgr.getSessionsForTests().get(spawn.agent_id)!;
+    // read_file should land; the two mode tools must be filtered out.
+    expect(session.allowedTools).toEqual(['read_file']);
+    mgr.shutdownForTests();
+  });
+
+  it('Phase 5 — role/charter round-trip through spawn → list and swarm_status snapshot', async () => {
+    const { config } = makeFakeConfig();
+    const mgr = new SwarmManager(config, { startSweep: false });
+
+    const spawn = await mgr.spawn({
+      action: 'spawn',
+      system_prompt: 'p',
+      role: 'reviewer',
+      charter: 'audit pull request diffs end-to-end',
+    });
+    if (!spawn.ok || spawn.action !== 'spawn') throw new Error('unreachable');
+
+    // list() surfaces role/charter on the summary.
+    const listed = mgr.list();
+    if (!listed.ok || listed.action !== 'list') throw new Error('unreachable');
+    expect(listed.agents[0]).toMatchObject({
+      agentId: spawn.agent_id,
+      role: 'reviewer',
+      charter: 'audit pull request diffs end-to-end',
+    });
+
+    // swarm_status snapshot surfaces the same fields under their
+    // snake_case keys.
+    const snap = mgr.getSwarmStatusSnapshot();
+    expect(snap.agents).toHaveLength(1);
+    expect(snap.agents[0]).toMatchObject({
+      agent_id: spawn.agent_id,
+      role: 'reviewer',
+      charter: 'audit pull request diffs end-to-end',
+    });
+    mgr.shutdownForTests();
+  });
+
+  it('Phase 5 — cap-reached turn returns status=message_turn_cap_reached and the session stays alive', async () => {
+    const { config } = makeFakeConfig();
+    const mgr = new SwarmManager(config, { startSweep: false });
+    process.env['ANTHROPIC_API_KEY'] = 'sk-test';
+    // The hoisted mock wraps `string` → `{ text, capReached: false }`,
+    // but we need capReached: true here, so return the structured shape
+    // directly.
+    hoisted.runLoop.mockResolvedValueOnce({
+      text: 'partial work',
+      capReached: true,
+    });
+
+    const spawn = await mgr.spawn({ action: 'spawn', system_prompt: 'p' });
+    if (!spawn.ok || spawn.action !== 'spawn') throw new Error('unreachable');
+    const r = await mgr.message({
+      action: 'message',
+      agent_id: spawn.agent_id,
+      prompt: 'go',
+    });
+    expect(r).toEqual({
+      ok: true,
+      action: 'message',
+      response: 'partial work',
+      status: 'message_turn_cap_reached',
+      session_status: SwarmSessionStatus.IDLE,
+    });
+    // Session must live so the orchestrator can choose to send
+    // `"continue"` or release.
+    expect(mgr.getSessionsForTests().has(spawn.agent_id)).toBe(true);
+    const session = mgr.getSessionsForTests().get(spawn.agent_id)!;
+    expect(session.status).toBe(SwarmSessionStatus.IDLE);
+    // Cap-reached turns still count.
+    expect(session.turnCount).toBe(1);
+    mgr.shutdownForTests();
+    delete process.env['ANTHROPIC_API_KEY'];
+  });
+
+  it('Phase 5 — getSwarmStatusSnapshot reports agents, workspace_dir, and recent_events newest-first', async () => {
+    const { config } = makeFakeConfig();
+    const mgr = new SwarmManager(config, { startSweep: false });
+    process.env['ANTHROPIC_API_KEY'] = 'sk-test';
+    hoisted.runLoop.mockResolvedValueOnce('hi back');
+
+    // Spawn two agents and message one of them so we have a non-trivial
+    // event ring (spawn, spawn, message).
+    const a = await mgr.spawn({ action: 'spawn', system_prompt: 'p' });
+    const b = await mgr.spawn({ action: 'spawn', system_prompt: 'p' });
+    if (!a.ok || a.action !== 'spawn' || !b.ok || b.action !== 'spawn') {
+      throw new Error('unreachable');
+    }
+    await mgr.message({
+      action: 'message',
+      agent_id: a.agent_id,
+      prompt: 'hi',
+    });
+
+    const snap = mgr.getSwarmStatusSnapshot();
+    expect(snap.agents.map((s) => s.agent_id)).toEqual([
+      a.agent_id,
+      b.agent_id,
+    ]);
+    expect(snap.workspace_dir).toBeTruthy();
+    expect(snap.workspace_dir.length).toBeGreaterThan(0);
+    // Newest-first ordering: the message event lands AFTER both spawns,
+    // so it should be the first entry in recent_events.
+    expect(snap.recent_events.length).toBe(3);
+    expect(snap.recent_events[0].action).toBe('message');
+    expect(snap.recent_events[1].action).toBe('spawn');
+    expect(snap.recent_events[2].action).toBe('spawn');
+    // The ring entries carry the agent id of the affected session.
+    expect(snap.recent_events[0].agent_id).toBe(a.agent_id);
+    mgr.shutdownForTests();
+    delete process.env['ANTHROPIC_API_KEY'];
+  });
+
+  it('Phase 5 — composed system prompt includes the swarm protocol block + role/charter', async () => {
+    const { config } = makeFakeConfig();
+    const mgr = new SwarmManager(config, { startSweep: false });
+    const spawn = await mgr.spawn({
+      action: 'spawn',
+      system_prompt: 'You are a careful auditor.',
+      role: 'reviewer',
+      charter: 'audit pull request diffs end-to-end',
+    });
+    if (!spawn.ok || spawn.action !== 'spawn') throw new Error('unreachable');
+    const session = mgr.getSessionsForTests().get(spawn.agent_id)!;
+    const prompt = session.getComposedSystemPromptForTests();
+    // Base prompt is preserved.
+    expect(prompt).toContain('You are a careful auditor.');
+    // Phase 5 protocol block is woven in.
+    expect(prompt).toContain('multi-agent swarm');
+    expect(prompt).toContain('swarm_status()');
+    expect(prompt).toContain('state.md');
+    expect(prompt).toContain(session.workspaceDir);
+    // Role + charter render through the protocol block.
+    expect(prompt).toContain('Your role: reviewer.');
+    expect(prompt).toContain('Charter: audit pull request diffs end-to-end');
+    mgr.shutdownForTests();
   });
 });

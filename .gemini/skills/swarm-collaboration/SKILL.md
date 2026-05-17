@@ -147,3 +147,34 @@ interactive session.
 Specifically: never invoke the `swarm` tool from inside an `async-pr-review`
 worker. The worker is itself a short-lived headless agent; spinning up a
 nested swarm inside it pays the cost twice without the interactive benefits.
+
+## Self-discovery via `swarm_status`
+
+Each spawned agent has a `swarm_status` tool that returns:
+- `agents[]`: every live swarm session with `role`, `charter`, `status`, `turn_count`, `seconds_since_active`
+- `workspace_dir`: path to the shared scratchpad
+- `recent_events[]`: up to 50 newest-first spawn/message/release events
+
+Use it at the start of any non-trivial task to understand the team context.
+Sub-agents should NOT assume their last-turn observations are current — the
+world may have moved while they were idle.
+
+## Shared narrative log: `state.md`
+
+The shared workspace `<workspace_dir>` (look up via `swarm_status()`) contains:
+- `<agent_id>.md` — per-agent artifact files (free-form, written by each agent)
+- `state.md` — append-only narrative log. After substantive work, append one
+  line prefixed with `[<agent_id> @ <iso-timestamp>]` summarizing what you did.
+
+## Release on role-exhaustion
+
+Orchestrators: `release` a swarm agent when its **role** is exhausted, not
+when a single task is complete. A reviewer that completed one review may
+still be needed for follow-ups. Idle TTL (30 min) sweeps forgotten sessions
+on its own; manual release is for explicit role-end transitions.
+
+## Cap handling
+
+When `message` returns `status: 'message_turn_cap_reached'`, the session is
+still alive. Decide explicitly: send a `"continue"` message to resume, or
+release if the work isn't worth continuing. Never assume cap = failure.

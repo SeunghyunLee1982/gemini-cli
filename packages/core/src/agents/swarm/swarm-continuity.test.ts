@@ -239,7 +239,10 @@ describe('Swarm stateful continuity E2E (swarm-design.md acceptance gate)', () =
     expect(msgA1.ok).toBe(true);
     if (!msgA1.ok || msgA1.action !== 'message') throw new Error('msgA1');
     expect(msgA1.response).toBe(aFirstReply);
-    expect(msgA1.status).toBe(SwarmSessionStatus.IDLE);
+    // Phase 5: message outcome is `'ok'` (no cap); the session's lifecycle
+    // status sits separately on `session_status`.
+    expect(msgA1.status).toBe('ok');
+    expect(msgA1.session_status).toBe(SwarmSessionStatus.IDLE);
 
     // 3. Spawn B.
     const spawnB = await mgr.spawn({

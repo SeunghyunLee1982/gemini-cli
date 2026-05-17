@@ -80,6 +80,11 @@ const SWARM_JSON_SCHEMA = {
         tools: { type: 'array', items: { type: 'string' } },
         max_turns: { type: 'integer', minimum: 1 },
         display_name: { type: 'string' },
+        // Phase 5: optional self-describing fields surfaced via
+        // `swarm_status` / `list`. Length caps mirror the Zod schema in
+        // `./types.ts` so the JSON schema and runtime validation agree.
+        role: { type: 'string', maxLength: 80 },
+        charter: { type: 'string', maxLength: 200 },
       },
     },
     {
@@ -278,7 +283,11 @@ function swarmResultToToolResult(result: SwarmResult): ToolResult {
         display = `Spawned swarm agent '${result.agent_id}'.`;
         break;
       case 'message':
-        display = `Swarm '${result.status}': ${result.response.slice(0, 200)}`;
+        // Phase 5: the message result has both a message-outcome `status`
+        // (ok / message_turn_cap_reached) and a session lifecycle
+        // `session_status` (idle / running / error / released). Render
+        // both so the user/LLM can tell at a glance whether a cap was hit.
+        display = `Swarm [${result.status}/${result.session_status}]: ${result.response.slice(0, 200)}`;
         break;
       case 'release':
         display = result.released

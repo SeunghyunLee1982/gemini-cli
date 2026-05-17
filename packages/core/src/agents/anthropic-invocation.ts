@@ -271,7 +271,13 @@ export class AnthropicAgentInvocation extends BaseToolInvocation<
     ];
 
     try {
-      const text = await runAnthropicMessageLoop({
+      // Phase 5: the loop now returns `{ text, capReached }`. The
+      // single-shot v1 invocation path doesn't surface `capReached` to its
+      // caller — cap reaching is treated as a silent end-of-turn here,
+      // matching pre-Phase-5 behavior. The swarm `message` action is the
+      // only consumer that branches on the flag (see
+      // `SwarmManager.message`).
+      const { text } = await runAnthropicMessageLoop({
         apiKey,
         model: resolveAnthropicModel(this.definition.model),
         system,

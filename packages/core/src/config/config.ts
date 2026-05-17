@@ -50,7 +50,7 @@ import { AskUserTool } from '../tools/ask-user.js';
 import { UpdateTopicTool } from '../tools/topicTool.js';
 import { TopicState } from './topicState.js';
 import { AgentTool } from '../agents/agent-tool.js';
-import { SwarmTool } from '../agents/swarm/index.js';
+import { SwarmTool, SwarmStatusTool } from '../agents/swarm/index.js';
 import { ExitPlanModeTool } from '../tools/exit-plan-mode.js';
 import { EnterPlanModeTool } from '../tools/enter-plan-mode.js';
 import {
@@ -4105,9 +4105,18 @@ export class Config implements McpContext, AgentLoopContext {
     // Register the experimental persistent agent swarm tool. Gated on the
     // `experimental.swarm` setting (see swarm-design.md). The tool wires a
     // `SwarmManager` singleton that holds long-lived sub-agent sessions.
+    //
+    // Phase 5: also register the read-only `swarm_status` companion tool
+    // adjacent to the main `swarm` tool, gated under the same flag. The
+    // companion is `Kind.Other` (not `Kind.Agent`) so sub-agents inherit
+    // it through the swarm-manager's per-tool filter and can self-discover
+    // peers without being granted the full swarm verb surface.
     if (this.isSwarmEnabled()) {
       maybeRegister(SwarmTool, () =>
         registry.registerTool(new SwarmTool(this, this.messageBus)),
+      );
+      maybeRegister(SwarmStatusTool, () =>
+        registry.registerTool(new SwarmStatusTool(this, this.messageBus)),
       );
     }
 

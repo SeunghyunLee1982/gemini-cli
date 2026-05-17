@@ -131,18 +131,39 @@ export interface AnthropicLoopParams {
 }
 
 /**
- * Drives the Anthropic tool-use loop. Returns the final assistant text.
+ * Result of one {@link runAnthropicMessageLoop} call.
+ *
+ * Phase 5: previously the loop returned a bare `string` and signaled
+ * "max_turns hit" by appending a `[Note: hit max_turns=N.]` suffix to the
+ * text. That suffix was load-bearing — the swarm manager needed to know cap
+ * was reached so the orchestrator could decide whether to send a follow-up
+ * `"continue"` message — but baking it into the user-visible text was both
+ * brittle (callers had to substring-match) and noisy (the assistant text
+ * always included the marker). The cap signal now lives on the structured
+ * `capReached` flag; the suffix is gone for cap, but the `max_tokens`
+ * truncation note stays because that one IS user-facing context.
+ */
+export interface AnthropicLoopResult {
+  /** Final assistant text. May still include the max_tokens truncation note. */
+  text: string;
+  /** True iff the loop exited because it hit `maxTurns` (turn cap). */
+  capReached: boolean;
+}
+
+/**
+ * Drives the Anthropic tool-use loop. Returns the final assistant text plus
+ * a structured `capReached` flag.
  *
  * - Mutates `params.messages` in place (caller observes post-turn state).
- * - On `max_turns` exhaustion, appends a note to the returned text but does
- *   NOT throw — matches the original `AnthropicAgentInvocation` behavior.
+ * - On `max_turns` exhaustion, returns `{ capReached: true }` so callers
+ *   can decide policy (e.g. swarm: surface as `message_turn_cap_reached`
+ *   without dirtying the response text). The single-shot Anthropic
+ *   invocation simply consumes `.text` and ignores the flag.
  * - On hard abort, throws (caller's try/catch decides how to surface it).
- *
- * @returns the assistant's final text reply.
  */
 export async function runAnthropicMessageLoop(
   params: AnthropicLoopParams,
-): Promise<string> {
+): Promise<AnthropicLoopResult> {
   const {
     apiKey,
     model,
@@ -190,10 +211,17 @@ export async function runAnthropicMessageLoop(
       case 'end_turn':
       case 'stop_sequence':
       case 'refusal':
-        return finalAssistantText(messages);
+        return { text: finalAssistantText(messages), capReached: false };
       case 'max_tokens': {
         const text = finalAssistantText(messages);
-        return text + '\n\n[Note: response truncated by max_tokens.]';
+        // The max_tokens note is still inline because it really IS part of
+        // the assistant's truncated reply — there's nothing else for the
+        // user/caller to do with that information at the message-action
+        // level. `capReached` only fires for the loop-turn cap.
+        return {
+          text: text + '\n\n[Note: response truncated by max_tokens.]',
+          capReached: false,
+        };
       }
       case 'tool_use': {
         const toolUses = resp.content.filter(
@@ -203,7 +231,7 @@ export async function runAnthropicMessageLoop(
         // stop_reason is 'tool_use', and the next-turn user message would
         // be empty content which Anthropic rejects. Treat as end.
         if (toolUses.length === 0) {
-          return finalAssistantText(messages);
+          return { text: finalAssistantText(messages), capReached: false };
         }
         const resultBlocks = await executeToolUses({
           toolUses,
@@ -221,13 +249,14 @@ export async function runAnthropicMessageLoop(
       }
       case 'pause_turn':
       default:
-        return finalAssistantText(messages);
+        return { text: finalAssistantText(messages), capReached: false };
     }
   }
 
-  return (
-    finalAssistantText(messages) + `\n\n[Note: hit max_turns=${maxTurns}.]`
-  );
+  // Loop exited because we hit `maxTurns`. The bare assistant text is
+  // returned with no suffix; callers can render the cap state from the
+  // structured flag (e.g. swarm: `message_turn_cap_reached`).
+  return { text: finalAssistantText(messages), capReached: true };
 }
 
 interface ExecuteToolUsesParams {

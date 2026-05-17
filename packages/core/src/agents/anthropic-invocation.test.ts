@@ -744,8 +744,15 @@ describe('AnthropicAgentInvocation', () => {
       expect(r.error).toBeUndefined();
     });
 
-    it('returns last text + max_turns note when the loop drains', async () => {
+    it('returns last text without a max_turns suffix when the loop drains (single-shot path is silent on cap)', async () => {
       // Two consecutive tool_use turns, then we hit max_turns=2.
+      //
+      // Phase 5 change: the shared loop no longer appends `[Note: hit
+      // max_turns=N.]` to the response text — cap-reached is signaled via
+      // the structured `capReached` flag instead. The single-shot
+      // anthropic-invocation path drops that flag silently (matching its
+      // pre-Phase-5 "just return whatever text we have" behavior), so the
+      // returned `llmContent` is purely the last assistant text.
       messagesCreate.mockResolvedValue({
         content: [
           { type: 'text', text: 'still thinking' },
@@ -791,7 +798,9 @@ describe('AnthropicAgentInvocation', () => {
         makeBus(),
       );
       const r = await inv.execute({ abortSignal: ac().signal });
-      expect(r.llmContent).toMatch(/hit max_turns=2/);
+      // Pure assistant text, no cap-suffix.
+      expect(r.llmContent).toBe('still thinking');
+      expect(r.llmContent).not.toMatch(/hit max_turns/);
       // Two turns -> two model calls.
       expect(messagesCreate).toHaveBeenCalledTimes(2);
     });

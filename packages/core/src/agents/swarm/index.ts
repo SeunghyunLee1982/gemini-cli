@@ -12,7 +12,11 @@
  */
 
 export * from './types.js';
-export { SwarmSession, type SwarmSessionParams } from './swarm-session.js';
+export {
+  SwarmSession,
+  type SwarmSessionParams,
+  SWARM_PROTOCOL_BLOCK,
+} from './swarm-session.js';
 export { SwarmManager, type SwarmActivityEvent } from './swarm-manager.js';
 export {
   SwarmTool,
@@ -21,3 +25,9 @@ export {
   SWARM_TOOL_NAME,
   SWARM_TOOL_DISPLAY_NAME,
 } from './swarm-tool.js';
+export {
+  SwarmStatusTool,
+  SwarmStatusInvocation,
+  SWARM_STATUS_TOOL_NAME,
+  SWARM_STATUS_TOOL_DISPLAY_NAME,
+} from './swarm-status-tool.js';
