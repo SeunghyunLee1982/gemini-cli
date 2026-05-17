@@ -182,9 +182,16 @@ When enabled, the orchestrator gains a single `swarm` tool with a discriminated
 
 ### Defaults
 
-- **Tools.** Read-only whitelist by default: `read_file`, `grep_search`, `glob`,
-  `list_directory`, `read_many_files`. Pass an explicit `tools` array on `spawn`
-  to widen access. Wildcards are not allowed.
+- **Tools.** Inherits the orchestrator's currently-registered toolset by default
+  (mirrors Claude Code's Task tool). Agent-kind tools are filtered out to
+  prevent recursive spawn. Wildcards are not allowed. Pass an explicit
+  `tools: [...]` array on `spawn` to narrow the set — for example, the original
+  read-only preset is
+  `['read_file', 'grep_search', 'glob', 'list_directory', 'read_many_files']`
+  (exported as `DEFAULT_SWARM_TOOLS`). Note: this default relies on v1.0's
+  strictly synchronous `message` (only one agent runs at a time) to avoid
+  concurrent-write races; v1.1 (async) must revisit before shipping parallel
+  execution.
 - **Idle TTL.** 30 minutes since last activity. Stale sessions are swept on a
   background timer. Sessions wedged in `running` past `2 * TTL` are aborted,
   marked `error`, and left in `list()` for debugging — the user must call

@@ -111,7 +111,11 @@ function makeFakeConfig(
 
   const parentRegistry = {
     getTool: (n: string) => toolMap.get(n),
-  } as unknown as { getTool: (n: string) => FakeTool | undefined };
+    getAllTools: () => Array.from(toolMap.values()),
+  } as unknown as {
+    getTool: (n: string) => FakeTool | undefined;
+    getAllTools: () => FakeTool[];
+  };
 
   const config = {
     getAppAbortSignal: () => appSignal,

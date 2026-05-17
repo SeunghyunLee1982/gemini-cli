@@ -40,7 +40,6 @@ import {
   SwarmSessionStatus,
   SwarmErrorCode,
   SwarmActionSchema,
-  DEFAULT_SWARM_TOOLS,
   DEFAULT_SWARM_MAX_TURNS,
   DEFAULT_SWARM_IDLE_TTL_MS,
 } from './types.js';
@@ -203,7 +202,22 @@ export class SwarmManager {
     const model: AnthropicModelAlias = validated.model ?? 'sonnet';
     const kind = validated.kind ?? 'anthropic';
     const maxTurns = validated.max_turns ?? DEFAULT_SWARM_MAX_TURNS;
-    const requestedTools = validated.tools ?? Array.from(DEFAULT_SWARM_TOOLS);
+
+    // Pull the parent registry once. By the time `spawn` runs, the global
+    // registry has already been built and registered on the Config.
+    const parentRegistry = this.config.getToolRegistry();
+
+    // Default: inherit all of the orchestrator's currently-registered tools.
+    // Mirrors Claude Code's Task tool semantics (sub-agents see the same
+    // toolset as the orchestrator). The per-tool clone below already excludes
+    // Agent-kind tools for recursion safety. Concurrent-write "stomping"
+    // (Turn 1 concern) is not a real risk in v1.0 because `message` is
+    // strictly synchronous — only one agent runs at a time. v1.1 (async)
+    // must revisit this default before allowing concurrent execution.
+    // Users can still narrow the set per-spawn via `tools: [...]`;
+    // `DEFAULT_SWARM_TOOLS` remains exported as a read-only preset.
+    const requestedTools =
+      validated.tools ?? parentRegistry.getAllTools().map((t) => t.name);
 
     // Mint the id.
     const agentId = this.mintAgentId(model);
@@ -217,9 +231,6 @@ export class SwarmManager {
     // Build the isolated tool registry. Mirrors `local-executor.ts:164-205`.
     const sessionToolRegistry = new ToolRegistry(this.config, sessionBus);
     const allowSet = new Set<string>();
-    // Pull the parent registry once. By the time `spawn` runs, the global
-    // registry has already been built and registered on the Config.
-    const parentRegistry = this.config.getToolRegistry();
     for (const name of requestedTools) {
       const tool = parentRegistry.getTool(name);
       if (!tool || tool.kind === Kind.Agent) continue;
