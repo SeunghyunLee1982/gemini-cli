@@ -1080,6 +1080,7 @@ export async function loadCliConfig(
     plan: settings.general?.plan?.enabled ?? true,
     voiceMode: settings.experimental?.voiceMode,
     tracker: settings.experimental?.taskTracker,
+    swarm: settings.experimental?.swarm,
     directWebFetch: settings.experimental?.directWebFetch,
     planSettings: settings.general?.plan?.directory
       ? settings.general.plan

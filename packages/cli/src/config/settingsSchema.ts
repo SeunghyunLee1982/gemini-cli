@@ -2291,6 +2291,16 @@ const SETTINGS_SCHEMA = {
         description: 'Enable task tracker tools.',
         showInDialog: false,
       },
+      swarm: {
+        type: 'boolean',
+        label: 'Persistent Agent Swarm',
+        category: 'Experimental',
+        requiresRestart: true,
+        default: false,
+        description:
+          'Enable the persistent agent swarm tool (long-lived Claude sub-agents with cross-turn session state). v1.0: synchronous, in-memory, read-only tools by default. See design-loop/swarm-design.md.',
+        showInDialog: false,
+      },
       modelSteering: {
         type: 'boolean',
         label: 'Model Steering',

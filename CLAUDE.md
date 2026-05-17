@@ -144,6 +144,66 @@ Then the Gemini main agent can delegate via the `agent` tool with
 `agent_name: 'my-helper'`. Requires `ANTHROPIC_API_KEY` in env (loaded
 automatically from `.env` at or above the workspace).
 
+## Swarm v1.0 (experimental)
+
+Persistent agent swarms let the main Gemini agent spawn long-lived Claude
+sub-agent instances, send them multiple messages across orchestrator turns
+(retaining session state), and release them. Unlike `kind: anthropic` sub-agents
+(one-shot delegation), a swarm session keeps its `messages` array and tool
+registry alive between calls.
+
+### Enabling
+
+Off by default. Turn on in `~/.gemini/settings.json` (or workspace equivalent):
+
+```json
+{
+  "experimental": {
+    "swarm": true
+  }
+}
+```
+
+When enabled, the orchestrator gains a single `swarm` tool with a discriminated
+`action` field.
+
+### Actions
+
+| Action    | Required fields      | Effect                                        |
+| --------- | -------------------- | --------------------------------------------- |
+| `spawn`   | `system_prompt`      | Creates a session, returns `agent_id` slug    |
+| `message` | `agent_id`, `prompt` | Sends one turn to a session, returns response |
+| `release` | `agent_id`           | Aborts and removes the session                |
+| `list`    | —                    | Snapshot of all live sessions                 |
+
+`spawn` also accepts optional `model` (`sonnet` / `opus`, default `sonnet`),
+`tools` (defaults to the read-only whitelist), `max_turns` (default 5), and
+`display_name`.
+
+### Defaults
+
+- **Tools.** Read-only whitelist by default: `read_file`, `grep_search`, `glob`,
+  `list_directory`, `read_many_files`. Pass an explicit `tools` array on `spawn`
+  to widen access. Wildcards are not allowed.
+- **Idle TTL.** 30 minutes since last activity. Stale sessions are swept on a
+  background timer. Sessions wedged in `running` past `2 * TTL` are aborted,
+  marked `error`, and left in `list()` for debugging — the user must call
+  `release` to remove them.
+- **Abort.** Sessions are bound to the global app lifecycle (SIGINT / process
+  exit / `release`), NOT to the orchestrator turn's signal — ending an
+  orchestrator turn does not kill a swarm session.
+
+### v1.0 scope
+
+Sync only: `message` blocks until the session's turn completes. In-memory only:
+sessions die with the parent CLI process. Single discriminated tool. No async /
+shared workspace / budget caps in v1 — those are v1.1+.
+
+The full design discussion and locked acceptance test live in
+`/home/shawnlee/gemini-fork/design-loop/swarm-design.md`. The continuity gate
+(`packages/core/src/agents/swarm/swarm-continuity.test.ts`) proves that prior
+turns persist into the next `message` call.
+
 ## Auth / ToS reminders
 
 Never use the OAuth path for automation. Code Assist telemetry hardcodes

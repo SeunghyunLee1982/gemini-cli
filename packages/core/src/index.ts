@@ -191,6 +191,10 @@ export * from './agents/agentLoader.js';
 export * from './agents/local-executor.js';
 export * from './agents/agent-scheduler.js';
 
+// Export the experimental persistent agent swarm primitive.
+// Phase 1: skeleton + types only. See design-loop/swarm-design.md.
+export * from './agents/swarm/index.js';
+
 // Export browser session management
 export { resetBrowserSession } from './agents/browser/browserAgentFactory.js';
 // Export agent session interface

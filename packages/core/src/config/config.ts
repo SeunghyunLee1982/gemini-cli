@@ -50,6 +50,7 @@ import { AskUserTool } from '../tools/ask-user.js';
 import { UpdateTopicTool } from '../tools/topicTool.js';
 import { TopicState } from './topicState.js';
 import { AgentTool } from '../agents/agent-tool.js';
+import { SwarmTool } from '../agents/swarm/index.js';
 import { ExitPlanModeTool } from '../tools/exit-plan-mode.js';
 import { EnterPlanModeTool } from '../tools/enter-plan-mode.js';
 import {
@@ -723,6 +724,7 @@ export interface ConfigParameters {
   disableLLMCorrection?: boolean;
   plan?: boolean;
   tracker?: boolean;
+  swarm?: boolean;
   planSettings?: PlanSettings;
   worktreeSettings?: WorktreeSettings;
   modelSteering?: boolean;
@@ -966,6 +968,21 @@ export class Config implements McpContext, AgentLoopContext {
   private readonly planEnabled: boolean;
   private readonly voiceMode: boolean;
   private readonly trackerEnabled: boolean;
+  private readonly swarmEnabled: boolean;
+  /**
+   * Long-lived AbortController whose signal lives for the lifetime of the
+   * application process. Fires on SIGINT/SIGTERM/`beforeExit` exactly once.
+   *
+   * Consumed by `SwarmSession`s (and any future long-lived sub-agent
+   * primitive) so that releasing an orchestrator turn does NOT tear down
+   * spawned sessions, but Ctrl+C / process exit DOES.
+   *
+   * Lazily initialized on first call to `getAppAbortSignal()` so the
+   * process-level listeners attach only when something actually needs them.
+   * See `design-loop/swarm-design.md` Turn 4 #1 + Opus's Phase 1 review.
+   */
+  private appAbortController: AbortController | undefined;
+  private appAbortDisposers: Array<() => void> = [];
   private readonly planModeRoutingEnabled: boolean;
   private readonly modelSteering: boolean;
   private memoryContextManager?: MemoryContextManager;
@@ -1123,6 +1140,7 @@ export class Config implements McpContext, AgentLoopContext {
     this.planEnabled = params.plan ?? true;
     this.voiceMode = params.voiceMode ?? false;
     this.trackerEnabled = params.tracker ?? false;
+    this.swarmEnabled = params.swarm ?? false;
     this.planModeRoutingEnabled = params.planSettings?.modelRouting ?? true;
     this.enableEventDrivenScheduler = params.enableEventDrivenScheduler ?? true;
     this.skillsSupport = params.skillsSupport ?? true;
@@ -3044,6 +3062,15 @@ export class Config implements McpContext, AgentLoopContext {
     return this.trackerEnabled;
   }
 
+  /**
+   * Whether the experimental persistent agent swarm primitive is enabled.
+   * Backed by `experimental.swarm` in settings.json. See
+   * `design-loop/swarm-design.md` for the v1.0 design.
+   */
+  isSwarmEnabled(): boolean {
+    return this.swarmEnabled;
+  }
+
   getApprovedPlanPath(): string | undefined {
     return this.approvedPlanPath;
   }
@@ -3765,6 +3792,81 @@ export class Config implements McpContext, AgentLoopContext {
     return this.messageBus;
   }
 
+  /**
+   * Returns the long-lived, application-scoped MessageBus. Lifetime = the
+   * parent CLI process. Distinct in *intent* (not in identity) from the
+   * tool-call-scoped buses passed to `ToolInvocation` constructors: those
+   * are derived children of this one.
+   *
+   * Use this seam from any consumer whose lifetime outlives a single tool
+   * call (currently: `SwarmSession`). Deriving a session bus from a
+   * tool-call bus would tear down the session when the spawning turn
+   * completes — see `design-loop/swarm-design.md` Turn 4 #3.
+   */
+  getGlobalAppBus(): MessageBus {
+    return this._messageBus;
+  }
+
+  /**
+   * Returns a long-lived AbortSignal tied to the application lifecycle. The
+   * signal fires exactly once when the process receives SIGINT/SIGTERM or
+   * the runtime emits `beforeExit`.
+   *
+   * Consumers (currently: `SwarmSession`) should chain their own
+   * `AbortController` to this signal so that user cancellation or process
+   * exit terminates in-flight work. Crucially, this signal is *not* the
+   * orchestrator's per-turn signal — releasing a turn must not cascade-kill
+   * long-lived sessions.
+   *
+   * Lazy. First call attaches the process-level listeners. Listeners are
+   * `once: true` so the signal fires at most once even if multiple SIGINTs
+   * arrive. `dispose()` removes the listeners (used in tests).
+   */
+  getAppAbortSignal(): AbortSignal {
+    if (!this.appAbortController) {
+      this.appAbortController = new AbortController();
+      const fire = (reason?: unknown) => {
+        if (
+          this.appAbortController &&
+          !this.appAbortController.signal.aborted
+        ) {
+          this.appAbortController.abort(reason);
+          // Phase 3 (Opus review #4): once the signal has fired, the
+          // process-level listeners were registered with `once`, so they've
+          // already auto-removed themselves. Null out the disposer array so
+          // it can't be invoked a second time and so the closures it holds
+          // can be GC'd.
+          this.appAbortDisposers = [];
+        }
+      };
+      const onSigint = () => fire('SIGINT');
+      const onSigterm = () => fire('SIGTERM');
+      const onBeforeExit = () => fire('beforeExit');
+      // `once: true` guarantees fire-exactly-once semantics on the listener
+      // side; the inner guard handles the case where multiple signals race.
+      process.once('SIGINT', onSigint);
+      process.once('SIGTERM', onSigterm);
+      process.once('beforeExit', onBeforeExit);
+      this.appAbortDisposers.push(() => {
+        process.off('SIGINT', onSigint);
+        process.off('SIGTERM', onSigterm);
+        process.off('beforeExit', onBeforeExit);
+      });
+    }
+    return this.appAbortController.signal;
+  }
+
+  /**
+   * Test-only: tear down process listeners attached by
+   * `getAppAbortSignal()`. Not part of the public API; production code
+   * relies on the process exiting to clean up.
+   */
+  disposeAppAbortSignalForTests(): void {
+    for (const dispose of this.appAbortDisposers) dispose();
+    this.appAbortDisposers = [];
+    this.appAbortController = undefined;
+  }
+
   getPolicyEngine(): PolicyEngine {
     return this.policyEngine;
   }
@@ -3999,6 +4101,15 @@ export class Config implements McpContext, AgentLoopContext {
     maybeRegister(AgentTool, () =>
       registry.registerTool(new AgentTool(this, this.messageBus)),
     );
+
+    // Register the experimental persistent agent swarm tool. Gated on the
+    // `experimental.swarm` setting (see swarm-design.md). The tool wires a
+    // `SwarmManager` singleton that holds long-lived sub-agent sessions.
+    if (this.isSwarmEnabled()) {
+      maybeRegister(SwarmTool, () =>
+        registry.registerTool(new SwarmTool(this, this.messageBus)),
+      );
+    }
 
     await registry.discoverAllTools();
     registry.sortTools();

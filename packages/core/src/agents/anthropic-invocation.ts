@@ -13,7 +13,6 @@ import {
   type ToolCallConfirmationDetails,
   type ExecuteOptions,
   Kind,
-  ToolConfirmationOutcome,
 } from '../tools/tools.js';
 import {
   type AgentInputs,
@@ -22,20 +21,17 @@ import {
   type SubagentProgress,
   SubagentState,
   DEFAULT_ANTHROPIC_MAX_TURNS,
-  SUBAGENT_REJECTED_ERROR_PREFIX,
 } from './types.js';
 import { type AgentLoopContext } from '../config/agent-loop-context.js';
 import type { MessageBus } from '../confirmation-bus/message-bus.js';
 import { ToolRegistry } from '../tools/tool-registry.js';
-import type { ToolCallRequestInfo } from '../scheduler/types.js';
-import { scheduleAgentTools } from './agent-scheduler.js';
 import { getToolCallContext } from '../utils/toolCallContext.js';
-import {
-  convertToAnthropicTools,
-  responsePartsToToolResultContent,
-  truncateToolOutput,
-} from './anthropic-tools.js';
+import { convertToAnthropicTools } from './anthropic-tools.js';
 import { debugLogger } from '../utils/debugLogger.js';
+import {
+  runAnthropicMessageLoop,
+  ANTHROPIC_LOOP_SOFT_REJECT_SUFFIX,
+} from './anthropic-loop.js';
 
 const DEFAULT_MAX_TOKENS = 4096;
 
@@ -59,25 +55,6 @@ export function resolveAnthropicModel(alias: AnthropicModelAlias): string {
   return ANTHROPIC_MODEL_ALIASES[alias];
 }
 
-const SOFT_REJECT_SUFFIX =
-  '\n\nIf a tool call is rejected by the user, acknowledge the rejection, ' +
-  'rethink your strategy, and try a different approach. Do not repeatedly ' +
-  'attempt the same rejected operation.';
-
-/**
- * Coerces an unknown JSON-ish value (Anthropic's `ToolUseBlock.input`) into
- * a `Record<string, unknown>` suitable for the scheduler's `args` bag.
- * Non-object inputs become `{}` rather than throwing.
- */
-function toArgsRecord(input: unknown): Record<string, unknown> {
-  if (input === null || typeof input !== 'object') return {};
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(input)) {
-    out[k] = v;
-  }
-  return out;
-}
-
 /**
  * Resolves the user-provided prompt from the loose input record. The agent-tool
  * smart-mapper passes either a single-property object (e.g. `{ prompt: '...' }`
@@ -94,29 +71,6 @@ function extractPrompt(params: AgentInputs): string {
   throw new Error(
     'Anthropic agent requires a string input (single-property object or { prompt: string }).',
   );
-}
-
-/**
- * Joins the trailing assistant turn's text blocks. Returns `''` if no
- * assistant turn or no text blocks (Anthropic occasionally returns `[]` for
- * refusals — we don't want to throw).
- */
-function finalAssistantText(messages: Anthropic.MessageParam[]): string {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m.role !== 'assistant') continue;
-    const content = m.content;
-    if (typeof content === 'string') return content;
-    if (!Array.isArray(content)) return '';
-    return content
-      .filter(
-        (b): b is Anthropic.TextBlockParam =>
-          typeof b === 'object' && b !== null && b.type === 'text',
-      )
-      .map((b) => b.text)
-      .join('\n');
-  }
-  return '';
 }
 
 /**
@@ -251,8 +205,9 @@ export class AnthropicAgentInvocation extends BaseToolInvocation<
 
   /**
    * v1 tool-use loop. Isolates a per-invocation tool registry against a
-   * derived message bus, runs up to `max_turns` round-trips with Anthropic,
-   * and back-propagates tool results keyed by `tool_use_id`.
+   * derived message bus, then delegates to the shared
+   * {@link runAnthropicMessageLoop} primitive so `SwarmSession` can reuse
+   * the same body across persistent turns.
    */
   private async executeWithTools(
     apiKey: string,
@@ -313,222 +268,36 @@ export class AnthropicAgentInvocation extends BaseToolInvocation<
         `\n\nYou have access to the following tools: ` +
         `${advertisedTools.join(', ')}. Use them as needed.`;
     }
-    system += SOFT_REJECT_SUFFIX;
+    system += ANTHROPIC_LOOP_SOFT_REJECT_SUFFIX;
 
-    // -- 5. Loop.
-    const client = new Anthropic({ apiKey });
+    // -- 5. Delegate to the shared loop.
     const maxTurns = this.definition.max_turns ?? DEFAULT_ANTHROPIC_MAX_TURNS;
     const messages: Anthropic.MessageParam[] = [
       { role: 'user', content: prompt },
     ];
 
     try {
-      for (let turnIdx = 0; turnIdx < maxTurns; turnIdx++) {
-        if (signal.aborted) {
-          return this.handleTopLevelError(
-            new Error('Aborted'),
-            signal,
-            updateOutput,
-          );
-        }
-
-        const resp = await client.messages.create(
-          {
-            model: resolveAnthropicModel(this.definition.model),
-            max_tokens: this.definition.max_tokens ?? DEFAULT_MAX_TOKENS,
-            temperature: this.definition.temperature,
-            system,
-            tools: anthropicTools,
-            messages,
-          },
-          { signal },
-        );
-
-        // Always push assistant content unchanged: tool_use blocks must live
-        // on the assistant turn that the next tool_result references.
-        messages.push({ role: 'assistant', content: resp.content });
-
-        switch (resp.stop_reason) {
-          case 'end_turn':
-          case 'stop_sequence':
-          case 'refusal':
-            return this.finish(finalAssistantText(messages), updateOutput);
-          case 'max_tokens': {
-            const text = finalAssistantText(messages);
-            return this.finish(
-              text + '\n\n[Note: response truncated by max_tokens.]',
-              updateOutput,
-            );
-          }
-          case 'tool_use': {
-            const toolUses = resp.content.filter(
-              (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
-            );
-            // Defensive: Anthropic's spec doesn't guarantee tool_use blocks
-            // when stop_reason is 'tool_use', and the next-turn user message
-            // would be empty content which Anthropic rejects. Treat as end.
-            if (toolUses.length === 0) {
-              return this.finish(finalAssistantText(messages), updateOutput);
-            }
-            const resultBlocks = await this.executeToolUses(
-              toolUses,
-              agentToolRegistry,
-              allowSet,
-              turnIdx,
-              parentCallId,
-              signal,
-            );
-            // Multi-tool-use turn => single user message with N tool_result
-            // blocks, each keyed by the matching `tool_use.id`.
-            messages.push({ role: 'user', content: resultBlocks });
-            continue;
-          }
-          case 'pause_turn':
-          default:
-            return this.finish(finalAssistantText(messages), updateOutput);
-        }
-      }
-
-      // Loop drained without resolution. Return whatever the model last said
-      // plus a note so it isn't silently lost.
-      return this.finish(
-        finalAssistantText(messages) + `\n\n[Note: hit max_turns=${maxTurns}.]`,
-        updateOutput,
-      );
+      const text = await runAnthropicMessageLoop({
+        apiKey,
+        model: resolveAnthropicModel(this.definition.model),
+        system,
+        temperature: this.definition.temperature,
+        maxTokens: this.definition.max_tokens ?? DEFAULT_MAX_TOKENS,
+        anthropicTools,
+        messages,
+        toolRegistry: agentToolRegistry,
+        allowSet,
+        config: this.context.config,
+        maxTurns,
+        signal,
+        schedulerPromptId: this.context.promptId,
+        subagentName: this.definition.name,
+        parentCallId,
+      });
+      return this.finish(text, updateOutput);
     } catch (error) {
       return this.handleTopLevelError(error, signal, updateOutput);
     }
-  }
-
-  private async executeToolUses(
-    toolUses: Anthropic.ToolUseBlock[],
-    agentToolRegistry: ToolRegistry,
-    allowSet: Set<string>,
-    turnIdx: number,
-    parentCallId: string | undefined,
-    signal: AbortSignal,
-  ): Promise<Anthropic.ToolResultBlockParam[]> {
-    const promptId = `${this.context.promptId}#anthropic-${turnIdx}`;
-    const results = new Array<Anthropic.ToolResultBlockParam | undefined>(
-      toolUses.length,
-    );
-
-    // Synthesize unauthorized-tool results in-line (no scheduler trip needed).
-    const scheduled: Array<{ idx: number; req: ToolCallRequestInfo }> = [];
-    for (let i = 0; i < toolUses.length; i++) {
-      const block = toolUses[i];
-      if (
-        !allowSet.has(block.name) ||
-        agentToolRegistry.getTool(block.name) === undefined
-      ) {
-        results[i] = {
-          type: 'tool_result',
-          tool_use_id: block.id,
-          is_error: true,
-          content: `Tool '${block.name}' is not available.`,
-        };
-        continue;
-      }
-      // `block.input` is typed `unknown` by the SDK. Anthropic always emits
-      // a JSON object here; coerce defensively. The scheduler expects a
-      // `Record<string, unknown>` args bag.
-      const input = toArgsRecord(block.input);
-      scheduled.push({
-        idx: i,
-        req: {
-          callId: block.id,
-          name: block.name,
-          args: input,
-          isClientInitiated: false,
-          prompt_id: promptId,
-        },
-      });
-    }
-
-    if (scheduled.length > 0) {
-      const completed = await scheduleAgentTools(
-        this.context.config,
-        scheduled.map((s) => s.req),
-        {
-          schedulerId: promptId,
-          subagent: this.definition.name,
-          parentCallId,
-          toolRegistry: agentToolRegistry,
-          signal,
-        },
-      );
-
-      // Map by callId for stable ordering — scheduler does not guarantee
-      // input/output array alignment for parallel batches.
-      const byCallId = new Map<string, (typeof completed)[number]>();
-      for (const c of completed) byCallId.set(c.request.callId, c);
-
-      for (const { idx, req } of scheduled) {
-        const call = byCallId.get(req.callId);
-        if (!call) {
-          results[idx] = {
-            type: 'tool_result',
-            tool_use_id: req.callId,
-            is_error: true,
-            content: 'Scheduler did not return a result for this tool call.',
-          };
-          continue;
-        }
-
-        if (call.status === 'success') {
-          const raw = responsePartsToToolResultContent(
-            call.response.responseParts,
-          );
-          results[idx] = {
-            type: 'tool_result',
-            tool_use_id: req.callId,
-            content: truncateToolOutput(raw) || '(no output)',
-          };
-          continue;
-        }
-
-        if (call.status === 'error') {
-          const msg =
-            call.response.error?.message ??
-            (call.response.error
-              ? String(call.response.error)
-              : 'Tool failed.');
-          results[idx] = {
-            type: 'tool_result',
-            tool_use_id: req.callId,
-            is_error: true,
-            content: truncateToolOutput(msg),
-          };
-          continue;
-        }
-
-        // status === 'cancelled'
-        if (call.outcome === ToolConfirmationOutcome.Cancel) {
-          // Soft reject: feed an error tool_result back and continue.
-          results[idx] = {
-            type: 'tool_result',
-            tool_use_id: req.callId,
-            is_error: true,
-            content:
-              `${SUBAGENT_REJECTED_ERROR_PREFIX} Acknowledge and try a ` +
-              `different approach.`,
-          };
-          continue;
-        }
-
-        // Hard abort (Ctrl+C). Propagate so the outer catch returns CANCELLED.
-        const err = new Error('Aborted');
-        err.name = 'AbortError';
-        throw err;
-      }
-    }
-
-    // Every slot is filled by the time we reach here (unauthorized synthesis
-    // covers skipped scheduling, success/error/cancel covers everything that
-    // went through the scheduler, and hard-abort throws above).
-    return results.filter(
-      (r): r is Anthropic.ToolResultBlockParam => r !== undefined,
-    );
   }
 
   private finish(
