@@ -37,6 +37,7 @@ import { debugLogger } from '../../utils/debugLogger.js';
 import { SwarmSession } from './swarm-session.js';
 import {
   type SwarmAction,
+  type SwarmEffectivePolicySummary,
   type SwarmResult,
   type SwarmSessionSummary,
   type SwarmStatusAgentEntry,
@@ -55,6 +56,51 @@ import {
   ENTER_PLAN_MODE_TOOL_NAME,
   EXIT_PLAN_MODE_TOOL_NAME,
 } from '../../tools/definitions/base-declarations.js';
+import { EXTENSION_POLICY_TIER } from '../../policy/config.js';
+import {
+  ApprovalMode,
+  PolicyDecision,
+  type PolicyRule,
+} from '../../policy/types.js';
+
+/**
+ * Phase 6 — Map the orchestrator-friendly string form of a policy decision
+ * (`'allow' | 'deny' | 'ask_user'`) to the runtime `PolicyDecision` enum.
+ * Defaults to `ASK_USER` for unknown values (the safest fallback). Avoids
+ * unsafe type-assertions on validated Zod strings.
+ */
+function mapStringToPolicyDecision(s: string): PolicyDecision {
+  switch (s) {
+    case 'allow':
+      return PolicyDecision.ALLOW;
+    case 'deny':
+      return PolicyDecision.DENY;
+    case 'ask_user':
+      return PolicyDecision.ASK_USER;
+    default:
+      return PolicyDecision.ASK_USER;
+  }
+}
+
+/**
+ * Phase 6 — Map the orchestrator-friendly string form of an approval mode
+ * to the runtime `ApprovalMode` enum. Returns `undefined` if the input is
+ * not a recognized mode name.
+ */
+function mapStringToApprovalMode(s: string): ApprovalMode | undefined {
+  switch (s) {
+    case 'default':
+      return ApprovalMode.DEFAULT;
+    case 'autoEdit':
+      return ApprovalMode.AUTO_EDIT;
+    case 'yolo':
+      return ApprovalMode.YOLO;
+    case 'plan':
+      return ApprovalMode.PLAN;
+    default:
+      return undefined;
+  }
+}
 
 /**
  * Telemetry event emitted on the global app bus for spawn/message/release.
@@ -96,6 +142,14 @@ const SWARM_BLOCKED_TOOL_NAMES: ReadonlySet<string> = new Set([
   ENTER_PLAN_MODE_TOOL_NAME,
   EXIT_PLAN_MODE_TOOL_NAME,
 ]);
+
+/**
+ * Phase 6 P1 — Hard cap on simultaneous swarm sessions per CLI process.
+ * Above this, `spawn` returns an `INVALID_ARGS` error; freeing capacity
+ * requires releasing an existing session. Keeps a runaway orchestrator
+ * from saturating Anthropic quotas / local memory with stuck sessions.
+ */
+export const MAX_SWARM_SESSIONS = 8;
 
 /**
  * Singleton manager of all live `SwarmSession` instances.
@@ -243,6 +297,18 @@ export class SwarmManager {
     }
     const validated = parsed.data;
 
+    // Phase 6 P1 — concurrent-session cap. Refuse the spawn rather than
+    // attempting to evict an existing session: orchestrator visibility into
+    // which session to evict is poor and the cap is small enough that
+    // explicit `release` is the right pattern.
+    if (this.sessions.size >= MAX_SWARM_SESSIONS) {
+      return {
+        ok: false,
+        error: `Cannot spawn: ${MAX_SWARM_SESSIONS} concurrent swarm sessions already running. Release one before spawning another.`,
+        code: SwarmErrorCode.INVALID_ARGS,
+      };
+    }
+
     const model: AnthropicModelAlias = validated.model ?? 'sonnet';
     const kind = validated.kind ?? 'anthropic';
     const maxTurns = validated.max_turns ?? DEFAULT_SWARM_MAX_TURNS;
@@ -328,6 +394,42 @@ export class SwarmManager {
       detachAppAbort = () => appSignal.removeEventListener('abort', onAbort);
     }
 
+    // Phase 6 — orchestrator-authored tier-2 PolicyRule[] for this sub-agent.
+    // Manager-controlled fields (`subagent`, `source`, `priority`) overwrite
+    // anything the orchestrator might have set, so the spawn cannot raise
+    // the user/admin ceiling (tier 4/5 always dominates tier 2).
+    let policyRuleSource: string | undefined;
+    if (validated.policy && validated.policy.length > 0) {
+      policyRuleSource = `swarm:${agentId}:spawn`;
+      const engine = this.config.getPolicyEngine();
+      for (let i = 0; i < validated.policy.length; i++) {
+        const raw = validated.policy[i];
+        const mappedModes = raw.modes
+          ?.map((m) => mapStringToApprovalMode(m))
+          .filter((m): m is ApprovalMode => m !== undefined);
+        const rule: PolicyRule = {
+          name: raw.name,
+          toolName: raw.toolName,
+          mcpName: raw.mcpName,
+          argsPattern: raw.argsPattern,
+          toolAnnotations: raw.toolAnnotations,
+          decision: mapStringToPolicyDecision(raw.decision),
+          modes:
+            mappedModes && mappedModes.length > 0 ? mappedModes : undefined,
+          interactive: raw.interactive,
+          denyMessage: raw.denyMessage,
+          // Manager-controlled: cannot be set by the orchestrator.
+          subagent: agentId,
+          source: policyRuleSource,
+          // Tier-2 base + small per-rule offset so the orchestrator's
+          // rule-array ordering is preserved as priority ordering. The
+          // ceiling (tier 4/5) always wins.
+          priority: EXTENSION_POLICY_TIER + 0.01 * i,
+        };
+        engine.addRule(rule);
+      }
+    }
+
     const session = new SwarmSession({
       agentId,
       kind,
@@ -352,6 +454,9 @@ export class SwarmManager {
       anthropicTools,
       allowSet,
       detachAppAbort,
+      // Phase 6: stash the rule source so `release` can remove tier-2
+      // rules cleanly when the session ends.
+      policyRuleSource,
     });
 
     this.sessions.set(agentId, session);
@@ -455,6 +560,13 @@ export class SwarmManager {
     }
     session.release();
     this.sessions.delete(args.agent_id);
+    // Phase 6 — purge any tier-2 policy rules this spawn inserted so
+    // released sessions don't leak rules into the engine.
+    if (session.policyRuleSource) {
+      this.config
+        .getPolicyEngine()
+        .removeRulesBySource(session.policyRuleSource);
+    }
     this.publishActivity({
       action: 'release',
       agentId: session.agentId,
@@ -588,6 +700,10 @@ export class SwarmManager {
         // Floor to whole seconds so the JSON stays readable for the LLM
         // and so test snapshots aren't sensitive to sub-second jitter.
         seconds_since_active: Math.floor((now - s.lastActiveAt) / 1000),
+        // Phase 6: aggregated counts + top-N highlights of the policy
+        // rules effectively scoped to this sub-agent. `/audit <agent_id>`
+        // exposes the full per-rule list for debugging.
+        effective_policy_summary: this.computeEffectivePolicySummary(s.agentId),
       });
     }
     return {
@@ -597,6 +713,79 @@ export class SwarmManager {
       // Ring is stored oldest-to-newest; reverse for newest-first ergonomics.
       recent_events: [...this.recentEvents].reverse(),
     };
+  }
+
+  /**
+   * Phase 6 — Look up a live session by agent id. Used by the `/audit`
+   * slash command to render the effective policy + recent activity for one
+   * agent. Returns `undefined` if no session exists for that id.
+   */
+  getSessionById(agentId: string): SwarmSession | undefined {
+    return this.sessions.get(agentId);
+  }
+
+  /**
+   * Phase 6 — Build the effective policy summary for one sub-agent.
+   * Filters `policyEngine.getRules()` to rules whose `subagent === agentId`
+   * OR `subagent === '*'` (workspace sidecar wildcard) and rolls them up
+   * into counts + a top-5 priority slice.
+   */
+  computeEffectivePolicySummary(agentId: string): SwarmEffectivePolicySummary {
+    const allRules = this.config.getPolicyEngine().getRules();
+    const scoped: PolicyRule[] = [];
+    for (const rule of allRules) {
+      if (rule.subagent === agentId || rule.subagent === '*') {
+        scoped.push(rule);
+      }
+    }
+
+    let allow = 0;
+    let deny = 0;
+    let askUser = 0;
+    for (const rule of scoped) {
+      switch (rule.decision) {
+        case PolicyDecision.ALLOW:
+          allow += 1;
+          break;
+        case PolicyDecision.DENY:
+          deny += 1;
+          break;
+        case PolicyDecision.ASK_USER:
+          askUser += 1;
+          break;
+        default:
+          break;
+      }
+    }
+
+    // Sort by priority desc for top-5; the engine itself stores rules
+    // sorted, but we copy + re-sort defensively in case rule mutation /
+    // ordering invariants drift.
+    const topRules = [...scoped]
+      .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
+      .slice(0, 5)
+      .map((r) => ({
+        name: r.name,
+        toolName: r.toolName,
+        decision: r.decision,
+      }));
+
+    return {
+      total_rules: scoped.length,
+      allow_count: allow,
+      deny_count: deny,
+      ask_user_count: askUser,
+      top_rules: topRules,
+    };
+  }
+
+  /**
+   * Phase 6 — Read-only view of the in-memory recent-events ring buffer.
+   * Returns events newest-first to match the `swarm_status` snapshot. Used
+   * by the `/audit` slash command to render recent activity for one agent.
+   */
+  getRecentEvents(): readonly SwarmStatusEventEntry[] {
+    return [...this.recentEvents].reverse();
   }
 
   /**

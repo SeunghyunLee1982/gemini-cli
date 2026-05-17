@@ -288,6 +288,47 @@ The full design discussion and locked acceptance test live in
 (`packages/core/src/agents/swarm/swarm-continuity.test.ts`) proves that prior
 turns persist into the next `message` call.
 
+### Spawn-time policy scoping (v1.x Scope Bridge)
+
+In addition to `tools: string[]`, `spawn` accepts `policy: PolicyRule[]` (up to
+50 rules per spawn) — each rule is stamped with `subagent: <agent_id>` and
+inserted into the `PolicyEngine` at tier 2 (`EXTENSION_POLICY_TIER`, well below
+the user ceiling at tier 4). The rules are removed when the session is released.
+Use this when you want to tighten the orchestrator's general permissions for a
+specific sub-agent's role. Example:
+
+```json
+{
+  "action": "spawn",
+  "role": "doc-writer",
+  "system_prompt": "You write docs only.",
+  "policy": [
+    { "toolName": "write_file", "argsPattern": "\\.md$", "decision": "allow" },
+    {
+      "toolName": "shell",
+      "decision": "deny",
+      "denyMessage": "doc-writer does not run shell"
+    }
+  ]
+}
+```
+
+A sidecar `<repo>/.gemini/swarm-policy.toml` is loaded alongside
+`.gemini/policies/` at workspace startup; its rules apply to all spawned
+sub-agents (any rule without an explicit `subagent` gets `subagent='*'` stamped
+on it, which the engine treats as a wildcard matching every non-empty caller
+subagent).
+
+The `/audit <agent_id>` slash command renders the effective policy + recent
+activity for one live swarm sub-agent.
+
+### P1 safety caps (v1.x)
+
+- `max_turns` on `spawn` is capped at 50.
+- Up to 8 simultaneous swarm sessions per CLI process. `spawn` rejects with
+  `Cannot spawn: 8 concurrent swarm sessions already running.` if you hit the
+  cap; release one to free capacity.
+
 ## Auth / ToS reminders
 
 Never use the OAuth path for automation. Code Assist telemetry hardcodes

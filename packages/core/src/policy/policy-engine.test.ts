@@ -305,6 +305,39 @@ describe('PolicyEngine', () => {
       expect(decision).toBe(PolicyDecision.DENY);
     });
 
+    it('should treat subagent: "*" as a wildcard matching any non-empty caller subagent (Phase 6)', async () => {
+      const rules: PolicyRule[] = [
+        {
+          toolName: 'shell',
+          decision: PolicyDecision.DENY,
+          subagent: '*',
+          denyMessage: 'no shell for sub-agents',
+        },
+      ];
+      engine = new PolicyEngine({ rules });
+
+      // Matches a specific sub-agent caller.
+      const subagentResult = await engine.check(
+        { name: 'shell', args: { command: 'ls' } },
+        undefined,
+        undefined,
+        'sonnet-1',
+      );
+      expect(subagentResult.decision).toBe(PolicyDecision.DENY);
+      expect(subagentResult.rule?.denyMessage).toBe('no shell for sub-agents');
+
+      // Does NOT match the orchestrator (caller subagent === undefined): the
+      // wildcard only fires when a sub-agent name is present, so the rule
+      // falls through to the default ASK_USER decision.
+      const orchestratorResult = await engine.check(
+        { name: 'shell', args: { command: 'ls' } },
+        undefined,
+        undefined,
+        undefined,
+      );
+      expect(orchestratorResult.decision).not.toBe(PolicyDecision.DENY);
+    });
+
     it('should match subagent name as alias for invoke_agent', async () => {
       const rules: PolicyRule[] = [
         { toolName: 'codebase_investigator', decision: PolicyDecision.DENY },

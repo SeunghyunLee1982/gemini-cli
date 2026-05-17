@@ -23,6 +23,47 @@ import {
 } from '../types.js';
 
 /**
+ * Phase 6 — Zod mirror of `PolicyRule` (`packages/core/src/policy/types.ts`)
+ * restricted to the subset the orchestrator may author on `swarm spawn`.
+ *
+ * Manager-controlled fields are NOT exposed here: `subagent` is overwritten
+ * to the spawned `agent_id`, `source` is overwritten to
+ * `swarm:<agent_id>:spawn`, and `priority` is forced into the tier-2
+ * (EXTENSION_POLICY_TIER) band so the user/admin ceiling always dominates.
+ *
+ * The string form of `argsPattern` is parsed into a `RegExp` here so the
+ * downstream `PolicyEngine.addRule()` receives a ready-to-evaluate rule.
+ */
+export const SwarmPolicyRuleSchema = z.object({
+  name: z.string().optional(),
+  toolName: z.string().min(1),
+  mcpName: z.string().optional(),
+  argsPattern: z
+    .string()
+    .optional()
+    .transform((s) => (s ? new RegExp(s) : undefined)),
+  toolAnnotations: z.record(z.unknown()).optional(),
+  decision: z.enum(['allow', 'deny', 'ask_user']),
+  modes: z.array(z.enum(['default', 'autoEdit', 'yolo', 'plan'])).optional(),
+  interactive: z.boolean().optional(),
+  denyMessage: z.string().optional(),
+});
+
+/**
+ * Validated shape of one orchestrator-authored policy rule, post-Zod parse.
+ * Mirrors the subset of `PolicyRule` writable on spawn — see
+ * {@link SwarmPolicyRuleSchema}.
+ */
+export type SwarmPolicyRule = z.infer<typeof SwarmPolicyRuleSchema>;
+
+/**
+ * Hard cap on the number of orchestrator-authored policy rules per spawn.
+ * Phase 6 P1 sanity bound — keeps a single mis-spawn from flooding the
+ * engine with hundreds of rules. Aligned with the JSON-schema `maxItems`.
+ */
+export const MAX_SWARM_SPAWN_POLICY_RULES = 50;
+
+/**
  * v1.0 only supports `anthropic`-kind sub-agents. `gemini` / `local` are
  * reserved for v1.1+. The field is optional in the schema and defaults
  * to `'anthropic'` at validation time.
@@ -101,12 +142,24 @@ export const SwarmActionSchema = z.discriminatedUnion('action', [
     model: z.enum(ANTHROPIC_MODEL_ALIAS_VALUES).optional(),
     system_prompt: z.string().min(1),
     tools: z.array(z.string()).optional(),
-    max_turns: z.number().int().positive().optional(),
+    // Phase 6 P1: hard cap on `max_turns` (was previously unbounded). 50
+    // matches `kind: anthropic` agents and keeps a stuck loop from racking
+    // up unbounded Anthropic round-trips before the orchestrator notices.
+    max_turns: z.number().int().positive().max(50).optional(),
     display_name: z.string().optional(),
     // Phase 5: optional short role label + one-line charter. Length-capped
     // so they stay terse enough for the LLM-rendered `swarm_status` payload.
     role: z.string().max(80).optional(),
     charter: z.string().max(200).optional(),
+    // Phase 6 — orchestrator-authored tier-2 PolicyRule[] scoped to this
+    // sub-agent. Co-exists with `tools: string[]` (v1.x back-compat); the
+    // manager overwrites `subagent`, `source`, and `priority` on every
+    // rule so a spawn cannot raise the user/admin ceiling. See
+    // {@link SwarmPolicyRuleSchema} and `swarm-north-star.md` v1.x.
+    policy: z
+      .array(SwarmPolicyRuleSchema)
+      .max(MAX_SWARM_SPAWN_POLICY_RULES)
+      .optional(),
   }),
   z.object({
     action: z.literal('message'),
@@ -246,6 +299,31 @@ export interface SwarmStatusAgentEntry {
   turn_count: number;
   last_active_at: number;
   seconds_since_active: number;
+  /**
+   * Phase 6 — Aggregated counts + top-N highlights of the policy rules that
+   * effectively apply to this sub-agent. Filtered to rules whose
+   * `subagent === agent_id` OR `subagent === '*'` (workspace sidecar). The
+   * orchestrator can render this in `swarm_status` without re-walking the
+   * engine itself; `/audit <agent_id>` provides the full per-rule list.
+   */
+  effective_policy_summary: SwarmEffectivePolicySummary;
+}
+
+/**
+ * Phase 6 — Compact view of the rules effectively scoped to one sub-agent.
+ * Counts are by `PolicyDecision`; `top_rules` is the highest-priority slice
+ * (capped at 5) for at-a-glance debugging.
+ */
+export interface SwarmEffectivePolicySummary {
+  total_rules: number;
+  allow_count: number;
+  deny_count: number;
+  ask_user_count: number;
+  top_rules: Array<{
+    name?: string;
+    toolName: string;
+    decision: string;
+  }>;
 }
 
 /**

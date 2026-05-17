@@ -2732,6 +2732,44 @@ export class Config implements McpContext, AgentLoopContext {
       this.policyEngine.addChecker(checker);
     }
 
+    // Phase 6 — workspace sidecar `<repo>/.gemini/swarm-policy.toml`. Rules
+    // here apply to spawned sub-agents (not the orchestrator) by stamping
+    // `subagent='*'` on any rule that doesn't already specify one. The
+    // engine treats `'*'` as a wildcard matching any non-empty caller
+    // subagent name. Tier is the same WORKSPACE_POLICY_TIER as ordinary
+    // workspace policies so it inherits the existing per-tier reload
+    // behavior (the tier-clear above sweeps these along with the rest).
+    //
+    // The sidecar lives ALONGSIDE the policy dir (`.gemini/policies/`),
+    // i.e. one directory up — at `<repo>/.gemini/swarm-policy.toml`. We
+    // derive that path from `policyDir`'s parent so callers don't need to
+    // pass two paths.
+    const swarmPolicyPath = path.join(
+      path.dirname(policyDir),
+      'swarm-policy.toml',
+    );
+    if (fs.existsSync(swarmPolicyPath)) {
+      const swarmResult = await loadPoliciesFromToml(
+        [swarmPolicyPath],
+        () => WORKSPACE_POLICY_TIER,
+      );
+      for (const rule of swarmResult.rules) {
+        if (rule.subagent === undefined) {
+          this.policyEngine.addRule({ ...rule, subagent: '*' });
+        } else {
+          // Explicit subagent in the TOML (e.g. scope to one role) — pass
+          // through unchanged.
+          this.policyEngine.addRule(rule);
+        }
+      }
+      for (const checker of swarmResult.checkers) {
+        this.policyEngine.addChecker(checker);
+      }
+      debugLogger.debug(
+        `Swarm sidecar policies loaded from: ${swarmPolicyPath}`,
+      );
+    }
+
     this.policyUpdateConfirmationRequest = undefined;
 
     debugLogger.debug(`Workspace policies loaded from: ${policyDir}`);

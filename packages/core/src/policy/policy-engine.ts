@@ -99,9 +99,17 @@ function ruleMatches(
     }
   }
 
-  // Check subagent if specified (only for PolicyRule, SafetyCheckerRule doesn't have it)
+  // Check subagent if specified (only for PolicyRule, SafetyCheckerRule doesn't have it).
+  // Phase 6: `subagent: '*'` is treated as wildcard that matches any non-empty
+  // caller subagent — used by the workspace-tier `swarm-policy.toml` sidecar so
+  // its rules apply to every spawned sub-agent but NOT the orchestrator
+  // (which calls with `subagent === undefined`).
   if ('subagent' in rule && rule.subagent !== undefined) {
-    if (rule.subagent !== subagent) {
+    if (rule.subagent === '*') {
+      if (!subagent) {
+        return false;
+      }
+    } else if (rule.subagent !== subagent) {
       return false;
     }
   }

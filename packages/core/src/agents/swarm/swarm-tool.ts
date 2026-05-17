@@ -82,13 +82,46 @@ const SWARM_JSON_SCHEMA = {
         model: { type: 'string', enum: [...ANTHROPIC_MODEL_ALIAS_VALUES] },
         system_prompt: { type: 'string' },
         tools: { type: 'array', items: { type: 'string' } },
-        max_turns: { type: 'integer', minimum: 1 },
+        // Phase 6: `max_turns` is capped at 50 to match the Zod schema.
+        max_turns: { type: 'integer', minimum: 1, maximum: 50 },
         display_name: { type: 'string' },
         // Phase 5: optional self-describing fields surfaced via
         // `swarm_status` / `list`. Length caps mirror the Zod schema in
         // `./types.ts` so the JSON schema and runtime validation agree.
         role: { type: 'string', maxLength: 80 },
         charter: { type: 'string', maxLength: 200 },
+        // Phase 6 — orchestrator-authored tier-2 PolicyRule[] scoped to
+        // this sub-agent. Mirrors `SwarmPolicyRuleSchema` in `./types.ts`.
+        // The manager overwrites `subagent` / `source` / `priority` on
+        // every rule so a spawn cannot raise the user/admin ceiling.
+        policy: {
+          type: 'array',
+          maxItems: 50,
+          items: {
+            type: 'object',
+            required: ['toolName', 'decision'],
+            properties: {
+              name: { type: 'string' },
+              toolName: { type: 'string' },
+              mcpName: { type: 'string' },
+              argsPattern: { type: 'string' },
+              toolAnnotations: { type: 'object' },
+              decision: {
+                type: 'string',
+                enum: ['allow', 'deny', 'ask_user'],
+              },
+              modes: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                  enum: ['default', 'autoEdit', 'yolo', 'plan'],
+                },
+              },
+              interactive: { type: 'boolean' },
+              denyMessage: { type: 'string' },
+            },
+          },
+        },
       },
     },
     {

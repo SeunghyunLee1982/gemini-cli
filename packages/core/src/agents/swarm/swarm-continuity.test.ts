@@ -154,10 +154,18 @@ function makeFakeConfig(): { config: Config; appController: AbortController } {
     getAllTools: () => FakeTool[];
   };
 
+  // Phase 6 — stub policy engine for spawn/release/getSwarmStatusSnapshot.
+  const policyEngine = {
+    addRule: vi.fn(),
+    removeRulesBySource: vi.fn(),
+    getRules: () => [],
+  };
+
   const config = {
     getAppAbortSignal: () => appController.signal,
     getGlobalAppBus: () => bus,
     getToolRegistry: () => parentRegistry,
+    getPolicyEngine: () => policyEngine,
     // Phase 4: SwarmManager.spawn touches storage.getProjectTempSwarmDir
     // to create the shared workspace; stub it under the OS temp tree.
     storage: {

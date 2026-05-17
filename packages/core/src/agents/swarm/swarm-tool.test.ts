@@ -119,10 +119,19 @@ function makeFakeConfig(): {
     getAllTools: () => FakeTool[];
   };
 
+  // Phase 6 — SwarmManager.spawn/release/getSwarmStatusSnapshot now touch
+  // the policy engine; stub it so the tool tests don't need real rules.
+  const policyEngine = {
+    addRule: vi.fn(),
+    removeRulesBySource: vi.fn(),
+    getRules: () => [],
+  };
+
   const config = {
     getAppAbortSignal: () => appController.signal,
     getGlobalAppBus: () => bus,
     getToolRegistry: () => parentRegistry,
+    getPolicyEngine: () => policyEngine,
     storage: {
       getProjectTempSwarmDir: () =>
         `${process.cwd()}/.gemini/tmp/test-session/swarm`,

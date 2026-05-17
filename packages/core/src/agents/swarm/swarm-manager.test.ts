@@ -13,11 +13,16 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { SwarmManager, SWARM_ACTIVITY_EVENT_NAME } from './swarm-manager.js';
+import {
+  SwarmManager,
+  SWARM_ACTIVITY_EVENT_NAME,
+  MAX_SWARM_SESSIONS,
+} from './swarm-manager.js';
 import type { SwarmActivityEvent } from './swarm-manager.js';
 import { SwarmSessionStatus, SwarmErrorCode } from './types.js';
 import { Kind } from '../../tools/tools.js';
 import type { Config } from '../../config/config.js';
+import { PolicyDecision, type PolicyRule } from '../../policy/types.js';
 
 // ---- mocks ---------------------------------------------------------------
 
@@ -105,12 +110,20 @@ function makeTool(name: string, kind: Kind = Kind.Read): FakeTool {
   return t;
 }
 
+interface FakePolicyEngine {
+  addRule: ReturnType<typeof vi.fn>;
+  removeRulesBySource: ReturnType<typeof vi.fn>;
+  getRules: ReturnType<typeof vi.fn>;
+}
+
 function makeFakeConfig(
   opts: { tools?: FakeTool[]; appSignal?: AbortSignal } = {},
 ): {
   config: Config;
   globalBus: EventEmitter & { derive: (n: string) => unknown };
   appController: AbortController;
+  policyEngine: FakePolicyEngine;
+  engineRules: PolicyRule[];
 } {
   const appController = new AbortController();
   const appSignal = opts.appSignal ?? appController.signal;
@@ -132,10 +145,29 @@ function makeFakeConfig(
     getAllTools: () => FakeTool[];
   };
 
+  // Phase 6 — `SwarmManager.spawn` / `release` / `getSwarmStatusSnapshot`
+  // now touch the policy engine to insert/remove tier-2 rules and to
+  // summarize effective policy. The tests don't need real engine behavior,
+  // so this stub records `addRule`/`removeRulesBySource` calls and answers
+  // `getRules` from an in-memory list.
+  const engineRules: PolicyRule[] = [];
+  const policyEngine = {
+    addRule: vi.fn((rule: PolicyRule) => {
+      engineRules.push(rule);
+    }),
+    removeRulesBySource: vi.fn((source: string) => {
+      for (let i = engineRules.length - 1; i >= 0; i--) {
+        if (engineRules[i].source === source) engineRules.splice(i, 1);
+      }
+    }),
+    getRules: vi.fn(() => engineRules),
+  };
+
   const config = {
     getAppAbortSignal: () => appSignal,
     getGlobalAppBus: () => bus,
     getToolRegistry: () => parentRegistry,
+    getPolicyEngine: () => policyEngine,
     // Phase 4: SwarmManager.spawn ensures the per-session shared workspace
     // dir. Tests run with a stub path under the OS temp tree; the manager
     // creates the dir on first spawn and swallows mkdir errors so this
@@ -145,7 +177,7 @@ function makeFakeConfig(
         `${process.cwd()}/.gemini/tmp/test-session/swarm`,
     },
   } as unknown as Config;
-  return { config, globalBus: bus, appController };
+  return { config, globalBus: bus, appController, policyEngine, engineRules };
 }
 
 // ---- tests ---------------------------------------------------------------
@@ -729,6 +761,274 @@ describe('SwarmManager', () => {
     // Role + charter render through the protocol block.
     expect(prompt).toContain('Your role: reviewer.');
     expect(prompt).toContain('Charter: audit pull request diffs end-to-end');
+    mgr.shutdownForTests();
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 6 — Scope Bridge tests (spawn-time policy, P1 caps, audit summary)
+  // -------------------------------------------------------------------------
+
+  it('Phase 6: spawn with policy[] inserts tier-2 PolicyRule[] stamped to the agent', async () => {
+    const { config, policyEngine, engineRules } = makeFakeConfig();
+    const mgr = new SwarmManager(config, { startSweep: false });
+
+    const spawn = await mgr.spawn({
+      action: 'spawn',
+      system_prompt: 'p',
+      policy: [
+        {
+          toolName: 'shell',
+          decision: 'deny',
+          denyMessage: 'no shell here',
+        },
+        {
+          toolName: 'read_file',
+          decision: 'allow',
+        },
+      ],
+    });
+    if (!spawn.ok || spawn.action !== 'spawn') throw new Error('unreachable');
+    const id = spawn.agent_id;
+
+    expect(policyEngine.addRule).toHaveBeenCalledTimes(2);
+    const inserted = engineRules.filter(
+      (r) => r.source === `swarm:${id}:spawn`,
+    );
+    expect(inserted).toHaveLength(2);
+
+    // Every inserted rule is stamped to this agent and uses tier-2 priority.
+    for (const r of inserted) {
+      expect(r.subagent).toBe(id);
+      expect(r.source).toBe(`swarm:${id}:spawn`);
+      // Priority is tier-2 base (2) + small per-rule offset.
+      expect(r.priority).toBeGreaterThanOrEqual(2);
+      expect(r.priority).toBeLessThan(3);
+    }
+    // Decisions round-trip from the orchestrator's string form into
+    // PolicyDecision enum values.
+    expect(inserted[0].decision).toBe(PolicyDecision.DENY);
+    expect(inserted[0].denyMessage).toBe('no shell here');
+    expect(inserted[1].decision).toBe(PolicyDecision.ALLOW);
+
+    mgr.shutdownForTests();
+  });
+
+  it('Phase 6: release purges tier-2 rules inserted at spawn time', async () => {
+    const { config, policyEngine, engineRules } = makeFakeConfig();
+    const mgr = new SwarmManager(config, { startSweep: false });
+
+    const spawn = await mgr.spawn({
+      action: 'spawn',
+      system_prompt: 'p',
+      policy: [{ toolName: 'shell', decision: 'deny' }],
+    });
+    if (!spawn.ok || spawn.action !== 'spawn') throw new Error('unreachable');
+    const id = spawn.agent_id;
+    expect(engineRules.some((r) => r.source === `swarm:${id}:spawn`)).toBe(
+      true,
+    );
+
+    await mgr.release({ action: 'release', agent_id: id });
+    expect(policyEngine.removeRulesBySource).toHaveBeenCalledWith(
+      `swarm:${id}:spawn`,
+    );
+    expect(engineRules.some((r) => r.source === `swarm:${id}:spawn`)).toBe(
+      false,
+    );
+
+    mgr.shutdownForTests();
+  });
+
+  it('Phase 6: getSwarmStatusSnapshot returns effective_policy_summary with counts and top_rules', async () => {
+    const { config, engineRules } = makeFakeConfig();
+    const mgr = new SwarmManager(config, { startSweep: false });
+
+    const spawn = await mgr.spawn({
+      action: 'spawn',
+      system_prompt: 'p',
+      policy: [
+        { toolName: 'shell', decision: 'deny' },
+        { toolName: 'read_file', decision: 'allow' },
+        { toolName: 'write_file', decision: 'ask_user' },
+      ],
+    });
+    if (!spawn.ok || spawn.action !== 'spawn') throw new Error('unreachable');
+    const id = spawn.agent_id;
+
+    // Workspace-tier wildcard rule should also be visible to this agent.
+    engineRules.push({
+      toolName: 'glob',
+      decision: PolicyDecision.ALLOW,
+      subagent: '*',
+      priority: 3,
+      source: 'workspace-swarm-policy.toml',
+    });
+
+    const snapshot = mgr.getSwarmStatusSnapshot();
+    const entry = snapshot.agents.find((a) => a.agent_id === id);
+    expect(entry).toBeDefined();
+    const summary = entry!.effective_policy_summary;
+    expect(summary.total_rules).toBe(4); // 3 spawn rules + 1 wildcard
+    expect(summary.deny_count).toBe(1);
+    expect(summary.allow_count).toBe(2);
+    expect(summary.ask_user_count).toBe(1);
+    expect(summary.top_rules.length).toBeLessThanOrEqual(5);
+    // Top entries echo toolName + decision so the LLM can scan it.
+    for (const r of summary.top_rules) {
+      expect(typeof r.toolName).toBe('string');
+      expect(typeof r.decision).toBe('string');
+    }
+
+    mgr.shutdownForTests();
+  });
+
+  it('Phase 6: workspace sidecar subagent="*" rule is visible to every spawned agent', async () => {
+    const { config, engineRules } = makeFakeConfig();
+    const mgr = new SwarmManager(config, { startSweep: false });
+
+    // Pre-seed the engine with a workspace-tier wildcard rule (mirrors what
+    // `loadWorkspacePolicies` does for `.gemini/swarm-policy.toml`).
+    engineRules.push({
+      toolName: 'shell',
+      decision: PolicyDecision.DENY,
+      subagent: '*',
+      priority: 3,
+      source: 'Workspace: swarm-policy.toml',
+      denyMessage: 'sub-agents may not run shell',
+    });
+
+    const s1 = await mgr.spawn({ action: 'spawn', system_prompt: 'a' });
+    const s2 = await mgr.spawn({ action: 'spawn', system_prompt: 'b' });
+    if (!s1.ok || !s2.ok || s1.action !== 'spawn' || s2.action !== 'spawn') {
+      throw new Error('spawn failed');
+    }
+
+    // The wildcard rule should show up in every agent's effective summary.
+    const summary1 = mgr.computeEffectivePolicySummary(s1.agent_id);
+    const summary2 = mgr.computeEffectivePolicySummary(s2.agent_id);
+    expect(summary1.deny_count).toBeGreaterThanOrEqual(1);
+    expect(summary2.deny_count).toBeGreaterThanOrEqual(1);
+    expect(summary1.top_rules.some((r) => r.toolName === 'shell')).toBe(true);
+    expect(summary2.top_rules.some((r) => r.toolName === 'shell')).toBe(true);
+
+    mgr.shutdownForTests();
+  });
+
+  it(`Phase 6: spawn rejects past MAX_SWARM_SESSIONS=${MAX_SWARM_SESSIONS} and accepts after release`, async () => {
+    const { config } = makeFakeConfig();
+    const mgr = new SwarmManager(config, { startSweep: false });
+
+    const ids: string[] = [];
+    for (let i = 0; i < MAX_SWARM_SESSIONS; i++) {
+      const r = await mgr.spawn({
+        action: 'spawn',
+        system_prompt: `p-${i}`,
+      });
+      expect(r.ok).toBe(true);
+      if (!r.ok || r.action !== 'spawn') throw new Error('unreachable');
+      ids.push(r.agent_id);
+    }
+    expect(mgr.getSessionsForTests().size).toBe(MAX_SWARM_SESSIONS);
+
+    // One more — should be rejected with the cap message.
+    const overflow = await mgr.spawn({
+      action: 'spawn',
+      system_prompt: 'overflow',
+    });
+    expect(overflow.ok).toBe(false);
+    if (overflow.ok) throw new Error('expected rejection');
+    expect(overflow.error).toContain(
+      `${MAX_SWARM_SESSIONS} concurrent swarm sessions`,
+    );
+    expect(overflow.code).toBe(SwarmErrorCode.INVALID_ARGS);
+
+    // Release one — the next spawn should now succeed.
+    await mgr.release({ action: 'release', agent_id: ids[0] });
+    const recovered = await mgr.spawn({
+      action: 'spawn',
+      system_prompt: 'recovered',
+    });
+    expect(recovered.ok).toBe(true);
+
+    mgr.shutdownForTests();
+  });
+
+  it('Phase 6: spawn policy[] integrates with PolicyEngine — DENY tool_use is blocked end-to-end', async () => {
+    // Use a real PolicyEngine so `engine.check()` exercises the actual
+    // matching logic (rules sorted by priority, subagent stamping, etc.).
+    // The brief explicitly demands this: a `policy: [{ toolName: 'shell',
+    // decision: 'deny', ... }]` spawn must translate to an engine-level
+    // DENY for that sub-agent.
+    const { PolicyEngine } = await import('../../policy/policy-engine.js');
+    const realEngine = new PolicyEngine({ rules: [] });
+
+    const { config } = makeFakeConfig();
+    // Swap in the real engine.
+    (config as unknown as { getPolicyEngine: () => unknown }).getPolicyEngine =
+      () => realEngine;
+
+    const mgr = new SwarmManager(config, { startSweep: false });
+    const spawn = await mgr.spawn({
+      action: 'spawn',
+      system_prompt: 'p',
+      policy: [
+        {
+          toolName: 'shell',
+          decision: 'deny',
+          denyMessage: 'no shell here',
+        },
+      ],
+    });
+    if (!spawn.ok || spawn.action !== 'spawn') throw new Error('unreachable');
+    const id = spawn.agent_id;
+
+    // A `shell` call from the spawned sub-agent should hit the deny rule.
+    const subagentResult = await realEngine.check(
+      { name: 'shell', args: { command: 'ls' } },
+      undefined,
+      undefined,
+      id,
+    );
+    expect(subagentResult.decision).toBe(PolicyDecision.DENY);
+    expect(subagentResult.rule?.denyMessage).toBe('no shell here');
+
+    // The orchestrator (subagent=undefined) must NOT be affected — the rule
+    // is scoped to the spawned agent.
+    const orchResult = await realEngine.check(
+      { name: 'shell', args: { command: 'ls' } },
+      undefined,
+      undefined,
+      undefined,
+    );
+    expect(orchResult.decision).not.toBe(PolicyDecision.DENY);
+
+    // After release, the rule should be gone.
+    await mgr.release({ action: 'release', agent_id: id });
+    const afterRelease = await realEngine.check(
+      { name: 'shell', args: { command: 'ls' } },
+      undefined,
+      undefined,
+      id,
+    );
+    expect(afterRelease.decision).not.toBe(PolicyDecision.DENY);
+
+    mgr.shutdownForTests();
+  });
+
+  it('Phase 6: spawn with max_turns: 51 is rejected at the Zod boundary', async () => {
+    const { config } = makeFakeConfig();
+    const mgr = new SwarmManager(config, { startSweep: false });
+    const r = await mgr.spawn({
+      action: 'spawn',
+      system_prompt: 'p',
+      // Cast through unknown: TypeScript will narrow `max_turns` to <=50,
+      // but the runtime check is what we're exercising here.
+      max_turns: 51 as unknown as number,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('expected rejection');
+    expect(r.code).toBe(SwarmErrorCode.INVALID_ARGS);
+    expect(r.error).toMatch(/max_turns|Number must be less|50/i);
     mgr.shutdownForTests();
   });
 });

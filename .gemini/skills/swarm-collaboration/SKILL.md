@@ -178,3 +178,24 @@ on its own; manual release is for explicit role-end transitions.
 When `message` returns `status: 'message_turn_cap_reached'`, the session is
 still alive. Decide explicitly: send a `"continue"` message to resume, or
 release if the work isn't worth continuing. Never assume cap = failure.
+
+## Spawn-time policy scoping (v1.x)
+
+When you want a sub-agent to act under a narrower scope than the
+orchestrator's general toolset (e.g., a doc-writer that should never run
+shell), pass `policy: PolicyRule[]` on spawn. Each rule is stamped to the
+spawned `agent_id` and inserted at tier 2 of the policy engine (well below
+the user's ceiling at tier 4) — so spawn-time policies can only tighten,
+never expand. The rules are purged when the session is released. Examples
+in `CLAUDE.md` (Swarm v1.0 section). Inspect the effective policy of a live
+agent with `/audit <agent_id>`.
+
+A workspace-tier `<repo>/.gemini/swarm-policy.toml` sidecar applies to ALL
+spawned sub-agents (any rule without an explicit `subagent` is stamped with
+`subagent='*'`, treated as a wildcard).
+
+## Hard caps in v1.x
+
+- `max_turns` on spawn is capped at 50.
+- At most 8 simultaneous swarm sessions per CLI process — `spawn` rejects
+  past the cap; release one to free capacity.

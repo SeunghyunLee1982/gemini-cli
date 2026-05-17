@@ -801,8 +801,10 @@ describe('AnthropicAgentInvocation', () => {
       // Pure assistant text, no cap-suffix.
       expect(r.llmContent).toBe('still thinking');
       expect(r.llmContent).not.toMatch(/hit max_turns/);
-      // Two turns -> two model calls.
-      expect(messagesCreate).toHaveBeenCalledTimes(2);
+      // 2 in-loop turns + 1 Phase 5.1 drain call (last msg was tool_result so
+      // the loop drains via one extra no-tools call to leave the history on
+      // a clean assistant turn).
+      expect(messagesCreate).toHaveBeenCalledTimes(3);
     });
 
     it('truncates oversize tool_result content with a refine hint', async () => {

@@ -20,6 +20,7 @@ import {
 } from '@google/gemini-cli-core';
 import { aboutCommand } from '../ui/commands/aboutCommand.js';
 import { agentsCommand } from '../ui/commands/agentsCommand.js';
+import { auditCommand } from '../ui/commands/auditCommand.js';
 import { authCommand } from '../ui/commands/authCommand.js';
 import { bugCommand } from '../ui/commands/bugCommand.js';
 import { bugMemoryCommand } from '../ui/commands/bugMemoryCommand.js';
@@ -123,6 +124,9 @@ export class BuiltinCommandLoader implements ICommandLoader {
     const allDefinitions: Array<SlashCommand | null> = [
       aboutCommand,
       ...(this.config?.isAgentsEnabled() ? [agentsCommand] : []),
+      // Phase 6 — `/audit <agent_id>` gated on `experimental.swarm` since
+      // it only operates against live swarm sessions.
+      ...(this.config?.isSwarmEnabled() ? [auditCommand] : []),
       authCommand,
       bugCommand,
       bugMemoryCommand,

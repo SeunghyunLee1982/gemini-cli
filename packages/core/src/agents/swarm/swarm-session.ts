@@ -165,6 +165,14 @@ export interface SwarmSessionParams {
    * (the constructor short-circuits and there is nothing to detach).
    */
   detachAppAbort?: () => void;
+  /**
+   * Phase 6 — stable `source` stamp on any tier-2 `PolicyRule`s the manager
+   * inserted from this spawn's `policy: []` field. Used by
+   * {@link SwarmManager.release} to call
+   * `policyEngine.removeRulesBySource(source)` so released sessions don't
+   * leak rules into the engine. `undefined` if the spawn had no `policy`.
+   */
+  policyRuleSource?: string;
 }
 
 /**
@@ -225,6 +233,14 @@ export class SwarmSession {
    */
   private detachAppAbort: (() => void) | undefined;
 
+  /**
+   * Phase 6 — `source` stamp on tier-2 `PolicyRule`s inserted by this
+   * session's spawn-time `policy: []` field. `SwarmManager.release` uses it
+   * to call `removeRulesBySource(...)` so released sessions don't leak
+   * rules into the engine. `undefined` when the spawn had no `policy`.
+   */
+  policyRuleSource: string | undefined;
+
   constructor(params: SwarmSessionParams) {
     this.agentId = params.agentId;
     this.kind = params.kind;
@@ -243,6 +259,7 @@ export class SwarmSession {
     this.anthropicTools = params.anthropicTools;
     this.allowSet = params.allowSet;
     this.detachAppAbort = params.detachAppAbort;
+    this.policyRuleSource = params.policyRuleSource;
     this.createdAt = Date.now();
     this.lastActiveAt = this.createdAt;
 
