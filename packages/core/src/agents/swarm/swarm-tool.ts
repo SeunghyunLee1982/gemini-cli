@@ -39,7 +39,11 @@ import {
   type SwarmAction,
   type SwarmResult,
 } from './types.js';
-import { ANTHROPIC_MODEL_ALIAS_VALUES } from '../types.js';
+import {
+  ANTHROPIC_MODEL_ALIAS_VALUES,
+  SubagentState,
+  type SubagentProgress,
+} from '../types.js';
 import { SwarmManager } from './swarm-manager.js';
 
 /**
@@ -214,7 +218,8 @@ export class SwarmInvocation extends BaseToolInvocation<
     return false;
   }
 
-  override async execute(_options: ExecuteOptions): Promise<ToolResult> {
+  override async execute(options: ExecuteOptions): Promise<ToolResult> {
+    const { updateOutput } = options;
     // Re-parse via Zod for tight per-variant narrowing inside the dispatch
     // (the JSON-schema check done by `BaseDeclarativeTool` is structural
     // only; Zod gives us the discriminated narrowing for free).
@@ -228,6 +233,27 @@ export class SwarmInvocation extends BaseToolInvocation<
       return swarmResultToToolResult(result);
     }
     const args = parsed.data;
+
+    // Phase 5.1 — push RUNNING progress for the slow path (`message`) so the
+    // TUI `SubagentGroupDisplay` moves past `Starting...`. Fast actions
+    // (spawn/release/list) complete in milliseconds and skip the dance; they
+    // never had the stuck-spinner problem. Mirrors
+    // `anthropic-invocation.ts`'s pattern (lines 152-159 / 181-189).
+    const agentName =
+      args.action === 'message'
+        ? args.agent_id
+        : args.action === 'spawn'
+          ? (args.display_name ?? 'swarm-agent')
+          : 'swarm';
+    if (updateOutput && args.action === 'message') {
+      const initial: SubagentProgress = {
+        isSubagentProgress: true,
+        agentName,
+        recentActivity: [],
+        state: SubagentState.RUNNING,
+      };
+      updateOutput(initial);
+    }
 
     const manager = SwarmManager.getInstance(this.config);
 
@@ -261,6 +287,20 @@ export class SwarmInvocation extends BaseToolInvocation<
         error: err instanceof Error ? err.message : String(err),
         code: SwarmErrorCode.INTERNAL,
       };
+    }
+
+    // Push terminal progress for `message` (success or error). Other actions
+    // skipped the initial RUNNING push so they must skip the terminal push
+    // too — otherwise the TUI would render a one-shot COMPLETED state with
+    // no preceding RUNNING, which is jarring.
+    if (updateOutput && args.action === 'message') {
+      const done: SubagentProgress = {
+        isSubagentProgress: true,
+        agentName,
+        recentActivity: [],
+        state: result.ok ? SubagentState.COMPLETED : SubagentState.ERROR,
+      };
+      updateOutput(done);
     }
 
     return swarmResultToToolResult(result);

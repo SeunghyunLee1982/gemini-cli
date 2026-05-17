@@ -273,8 +273,126 @@ describe('runAnthropicMessageLoop (smoke)', () => {
     expect(capReached).toBe(true);
     expect(text).toBe('still working');
     expect(text).not.toMatch(/hit max_turns/);
-    // Exactly maxTurns model calls before exiting.
+    // Phase 5.1: the loop body exhausts `maxTurns` (2 calls) and then issues
+    // ONE additional drain call to flush the trailing `user(tool_result)`
+    // into a clean assistant turn. Total = maxTurns + 1 = 3.
+    expect(hoisted.messagesCreate).toHaveBeenCalledTimes(3);
+  });
+
+  it('Phase 5.1 — capReached + last msg user(tool_result): drains via one extra no-tools call so history ends on assistant', async () => {
+    // Turn 1: tool_use (will produce user(tool_result) after scheduler).
+    // After turn 1 the loop iteration count == maxTurns (1) → exits with
+    // capReached. The drain call must then fire and push an assistant turn
+    // so the next user message ("continue") cannot violate alternation.
+    hoisted.messagesCreate.mockResolvedValueOnce({
+      content: [
+        { type: 'text', text: 'working' },
+        { type: 'tool_use', id: 'tu_drain', name: 'read_file', input: {} },
+      ],
+      stop_reason: 'tool_use',
+    });
+    // Drain call: returns a clean end_turn assistant message.
+    hoisted.messagesCreate.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'Done.' }],
+      stop_reason: 'end_turn',
+    });
+
+    hoisted.scheduleAgentTools.mockResolvedValueOnce([
+      {
+        status: 'success',
+        request: {
+          callId: 'tu_drain',
+          name: 'read_file',
+          args: {},
+          isClientInitiated: false,
+          prompt_id: 'p',
+        },
+        response: {
+          callId: 'tu_drain',
+          responseParts: [{ text: 'data' }],
+          resultDisplay: undefined,
+          error: undefined,
+          errorType: undefined,
+        },
+      } as unknown as CompletedToolCall,
+    ]);
+
+    const fakeTool = { clone: () => fakeTool, kind: 'other' };
+    const fakeRegistry = {
+      getTool: () => fakeTool,
+    } as unknown as ToolRegistry;
+
+    const messages: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: 'go' },
+    ];
+    const { text, capReached } = await runAnthropicMessageLoop({
+      apiKey: 'sk-test',
+      model: 'm',
+      system: 's',
+      anthropicTools: [],
+      messages: messages as never,
+      toolRegistry: fakeRegistry,
+      allowSet: new Set<string>(['read_file']),
+      config: {} as unknown as Config,
+      maxTurns: 1,
+      signal: new AbortController().signal,
+      schedulerPromptId: 'drain',
+      subagentName: 'sonnet-drain',
+    });
+
+    // Cap still reached — drain is a tail cleanup, not a turn.
+    expect(capReached).toBe(true);
+    // Final assistant text comes from the drain call.
+    expect(text).toBe('Done.');
+    // Exactly 2 API calls: the in-cap iteration + the drain.
     expect(hoisted.messagesCreate).toHaveBeenCalledTimes(2);
+    // History ends on assistant so the caller can safely append a user
+    // turn (e.g. swarm's "continue") without breaking alternation.
+    expect(messages[messages.length - 1].role).toBe('assistant');
+    // Sequence sanity:
+    //   user → assistant(tool_use) → user(tool_result) → assistant(end_turn)
+    expect(messages.map((m) => m.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+    ]);
+    // Drain call must have been issued WITHOUT tools (the whole point: the
+    // model is forced to produce text, not another tool_use).
+    const drainCallArgs = hoisted.messagesCreate.mock.calls[1][0] as {
+      tools?: unknown;
+    };
+    expect(drainCallArgs.tools).toBeUndefined();
+  });
+
+  it('Phase 5.1 — end_turn within cap: returns early with capReached:false and does NOT issue the drain call', async () => {
+    hoisted.messagesCreate.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'Done.' }],
+      stop_reason: 'end_turn',
+    });
+
+    const messages: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: 'hi' },
+    ];
+    const { text, capReached } = await runAnthropicMessageLoop({
+      apiKey: 'sk-test',
+      model: 'm',
+      system: 's',
+      anthropicTools: [],
+      messages: messages as never,
+      toolRegistry: {} as unknown as ToolRegistry,
+      allowSet: new Set<string>(),
+      config: {} as unknown as Config,
+      maxTurns: 5,
+      signal: new AbortController().signal,
+      schedulerPromptId: 'no-drain',
+      subagentName: 'sonnet-no-drain',
+    });
+
+    expect(text).toBe('Done.');
+    expect(capReached).toBe(false);
+    // Exactly one API call — drain MUST NOT run when capReached is false.
+    expect(hoisted.messagesCreate).toHaveBeenCalledTimes(1);
   });
 
   it('throws AbortError when the signal is already aborted before the first call', async () => {

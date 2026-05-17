@@ -256,6 +256,45 @@ export async function runAnthropicMessageLoop(
   // Loop exited because we hit `maxTurns`. The bare assistant text is
   // returned with no suffix; callers can render the cap state from the
   // structured flag (e.g. swarm: `message_turn_cap_reached`).
+  //
+  // Phase 5.1 — drain-to-clean-state. If the loop's last action was
+  // `tool_use` → `tool_result`, the history ends with a `user(tool_result)`
+  // block. Sending another user message (e.g. swarm's `"continue"`) on the
+  // NEXT call would violate Anthropic's user/assistant alternation contract
+  // and return `400 invalid_request_error`. Make one more API call with
+  // `tools: []` to force a clean `end_turn` (or `max_tokens` /
+  // `stop_sequence`) assistant message so the caller can safely append a
+  // user turn afterwards.
+  const lastMsg = messages[messages.length - 1];
+  const endsInToolResult =
+    lastMsg?.role === 'user' &&
+    Array.isArray(lastMsg.content) &&
+    lastMsg.content.some(
+      (b): b is Anthropic.ToolResultBlockParam =>
+        typeof b === 'object' && b !== null && b.type === 'tool_result',
+    );
+
+  if (endsInToolResult) {
+    if (signal.aborted) {
+      const err = new Error('Aborted');
+      err.name = 'AbortError';
+      throw err;
+    }
+    const drainResp = await client.messages.create(
+      {
+        model,
+        max_tokens: maxTokens ?? DEFAULT_MAX_TOKENS,
+        temperature,
+        system,
+        // No tools: model must produce text, not another tool_use, so the
+        // history always ends in an `assistant` turn.
+        messages,
+      },
+      { signal },
+    );
+    messages.push({ role: 'assistant', content: drainResp.content });
+  }
+
   return { text: finalAssistantText(messages), capReached: true };
 }
 
