@@ -337,6 +337,34 @@ Never use the OAuth path for automation. Code Assist telemetry hardcodes
 forbids third-party tools accessing Code Assist via Gemini CLI OAuth. For any
 swarm/headless workload, use `GEMINI_API_KEY` (paid) or Vertex AI.
 
+## Live testing from outside the repo
+
+To exercise the swarm primitive against real coding work — not the in-process
+vitest mocks — use the out-of-workspace test harness at
+[`test-harness/`](./test-harness/). Human-facing walkthrough lives in
+[`TESTING.md`](./TESTING.md). Summary:
+
+- `~/.local/bin/gemini-fork` launcher runs this repo's `bundle/gemini.js` while
+  leaving the upstream `gemini` 0.42 on PATH alone.
+- `test-harness/harness.sh new <scenario>` creates a fresh sandbox at
+  `~/swarm-test/runs/<scenario>-<ts>/` with seed code, `.gemini/settings.json`
+  (swarm enabled, OAuth), and `.env` (`ANTHROPIC_API_KEY` copied from the fork's
+  parent `.env`).
+- User then `cd`s into the sandbox, runs `gemini-fork` interactively (OAuth
+  orchestrator), pastes the prompt from `PROMPT.md`, exits.
+- `test-harness/harness.sh analyze latest` parses the matching chat record under
+  `~/.gemini/tmp/<project>/chats/` and prints tool-call frequencies,
+  per-swarm-action summaries, and the final orchestrator message.
+
+Built-in scenarios: `swarm-review` (2-agent code review of seeded buggy TS,
+exercises Phase 5 spawn/message/release + Phase 6 `/audit`) and `policy-scope`
+(1-agent doc-writer with explicit `policy: PolicyRule[]`, exercises Phase 6
+spawn-time policy field + runtime engine denial).
+
+**Automation gap.** Orchestrator turn still requires a human (OAuth + paste).
+Harness automates setup and post-mortem only. Headless end-to-end would need
+`GEMINI_API_KEY` / Vertex ADC — deferred.
+
 ## Build / test cheatsheet
 
 ```bash
