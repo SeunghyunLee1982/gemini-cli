@@ -89,6 +89,10 @@ Each scenario directory under `test-harness/scenarios/<id>/` has:
 - `PROMPT.md` — paste this into the orchestrator session
 - `EXPECTED.md` — checklist of what to verify in the analysis output and on disk
   after the run
+- `EXTRA_SKILLS` (optional) — newline-separated list of skill dirs to copy from
+  `<repo>/.gemini/skills/` into the sandbox's `.gemini/skills/`. The
+  `swarm-collaboration` skill is always copied; list anything else the scenario
+  benefits from (e.g. `code-reviewer` for review scenarios).
 
 ## Authoring a new scenario
 
@@ -109,7 +113,10 @@ Each run creates:
 ```
 ~/gemini-fork/sandboxes/<scenario>-<YYYYMMDD-HHMMSS>/
 ├── .gemini/
-│   └── settings.json   # experimental.swarm=true + OAuth
+│   ├── settings.json   # experimental.swarm=true + OAuth
+│   └── skills/
+│       ├── swarm-collaboration/    # always copied (state.md + release rules)
+│       └── <extra>/                # per scenario's EXTRA_SKILLS
 ├── .env                # ANTHROPIC_API_KEY for swarm sub-agents
 ├── PROMPT.md           # copy of the scenario prompt
 ├── EXPECTED.md         # copy of what to verify

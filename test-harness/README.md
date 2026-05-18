@@ -70,6 +70,8 @@ mkdir -p test-harness/scenarios/<name>/SEED
 # sandbox.
 # Write PROMPT.md (what to paste into gemini-fork)
 # Write EXPECTED.md (what to look for in chat record / filesystem after)
+# Optional: write EXTRA_SKILLS (one skill-dir name per line) if the
+# scenario benefits from upstream skills beyond swarm-collaboration.
 ```
 
 ## Sandbox layout
@@ -79,7 +81,10 @@ Each `harness.sh new <scenario>` creates:
 ```
 ~/gemini-fork/sandboxes/<scenario>-<YYYYMMDD-HHMMSS>/
 ├── .gemini/
-│   └── settings.json          # experimental.swarm=true, OAuth
+│   ├── settings.json          # experimental.swarm=true, OAuth
+│   └── skills/
+│       ├── swarm-collaboration/  # always copied
+│       └── <extra>/              # per scenario's EXTRA_SKILLS file
 ├── .env                       # ANTHROPIC_API_KEY (for swarm sub-agents)
 ├── PROMPT.md                  # copy of the scenario prompt
 ├── EXPECTED.md                # copy of what to verify

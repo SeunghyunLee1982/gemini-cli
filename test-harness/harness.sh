@@ -51,7 +51,7 @@ cmd_new() {
   fi
 
   # 2. .gemini/settings.json — swarm enabled, plan-mode allowed for testing
-  mkdir -p "$run/.gemini"
+  mkdir -p "$run/.gemini/skills"
   cat > "$run/.gemini/settings.json" <<'EOF'
 {
   "experimental": {
@@ -64,6 +64,34 @@ cmd_new() {
   }
 }
 EOF
+
+  # 2a. Copy the swarm-collaboration SKILL.md so the orchestrator sees
+  # the state.md convention, release-on-role-exhaustion rule, and the
+  # paste-verbatim discipline. Skills are loaded per workspace cwd (see
+  # `packages/core/src/skills/skillManager.ts:98`) — without this file the
+  # swarm tool still works but the orchestrator misses the protocol
+  # guidance. Always copied.
+  local repo_skills="$FORK_ROOT/.gemini/skills"
+  if [[ -d "$repo_skills/swarm-collaboration" ]]; then
+    cp -r "$repo_skills/swarm-collaboration" "$run/.gemini/skills/"
+  fi
+
+  # 2b. Per-scenario extra skills. If the scenario ships an EXTRA_SKILLS
+  # file (one skill-dir name per line, lines starting with `#` ignored),
+  # copy each from <repo>/.gemini/skills/ into the sandbox so the
+  # orchestrator can activate them. Useful when a scenario benefits from
+  # e.g. the upstream `code-reviewer` skill — opt-in per scenario, not
+  # blanket-imported.
+  if [[ -f "$src/EXTRA_SKILLS" ]]; then
+    while IFS= read -r skill_name; do
+      [[ -z "$skill_name" || "$skill_name" == \#* ]] && continue
+      if [[ -d "$repo_skills/$skill_name" ]]; then
+        cp -r "$repo_skills/$skill_name" "$run/.gemini/skills/"
+      else
+        echo "  warn: EXTRA_SKILLS lists '$skill_name' but $repo_skills/$skill_name is missing" >&2
+      fi
+    done < "$src/EXTRA_SKILLS"
+  fi
 
   # 3. .env — copy ANTHROPIC_API_KEY from fork's .env. The fork walks up to
   # find a .env; we put one directly in the sandbox so the lookup short-

@@ -1,0 +1,4 @@
+# Extra skills to copy into this scenario's sandbox (one per line).
+# `swarm-collaboration` is always copied — don't list it here.
+# Names must match subdirectories of <repo>/.gemini/skills/.
+code-reviewer
