@@ -49,12 +49,16 @@ import { SWARM_STATUS_TOOL_NAME } from './types.js';
 export { SWARM_STATUS_TOOL_NAME };
 export const SWARM_STATUS_TOOL_DISPLAY_NAME = 'Swarm Status';
 
-const SWARM_STATUS_TOOL_DESCRIPTION =
-  'Return a read-only snapshot of the current swarm: every live ' +
-  'sub-agent (with role/charter), the shared workspace directory path, ' +
-  'and up to 50 most-recent spawn/message/release events (newest ' +
-  'first). Sub-agents should call this at the start of any non-trivial ' +
-  'task so they know who else is on the team.';
+// Phase 8 — prefix the orchestrator-side usage hint ("Read-only. Call at
+// the start of any non-trivial swarm task.") so the model gets the
+// when-to-use signal directly in the tool description.
+export const SWARM_STATUS_TOOL_DESCRIPTION =
+  'Read-only. Call at the start of any non-trivial swarm task. ' +
+  'Returns a snapshot of the current swarm: every live sub-agent ' +
+  '(with role/charter), the shared workspace directory path, and ' +
+  'up to 50 most-recent spawn/message/release events (newest ' +
+  'first). Sub-agents should also call this at the start of any ' +
+  'non-trivial task so they know who else is on the team.';
 
 /**
  * Empty JSON schema — `swarm_status` takes no arguments. We keep the

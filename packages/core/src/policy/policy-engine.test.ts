@@ -584,6 +584,102 @@ describe('PolicyEngine', () => {
 
       expect(decision).toBe(PolicyDecision.DENY);
     });
+
+    // Phase 8 — locks the JSON-shape `argsPattern` invariant for the
+    // swarm-recursive-guard rule that `Config` installs when
+    // `experimental.swarm` is on. The engine matches `argsPattern`
+    // against `stableStringify(toolCall.args)` (JSON form), NOT the raw
+    // shell text — so the guard pattern looks for the JSON-quoted
+    // `"command":"gemini..."` substring. This test exists as a drift
+    // guard: if someone "fixes" the pattern to a raw shell regex
+    // (`^\s*gemini\b`), it will silently stop matching and we will
+    // notice here.
+    it('Phase 8 — recursive-gemini guard pattern matches JSON form of run_shell_command args', async () => {
+      const rule: PolicyRule = {
+        toolName: 'run_shell_command',
+        argsPattern: /"command":"(gemini|gemini-fork)(\s|"|\\)/,
+        decision: PolicyDecision.DENY,
+        priority: 1,
+        source: 'swarm-recursive-guard',
+        denyMessage: 'no recursive gemini',
+      };
+      engine = new PolicyEngine({
+        rules: [rule],
+        approvalMode: ApprovalMode.DEFAULT,
+      });
+
+      // 1. Direct `gemini --version` is denied.
+      expect(
+        (
+          await engine.check(
+            {
+              name: 'run_shell_command',
+              args: { command: 'gemini --version' },
+            },
+            undefined,
+          )
+        ).decision,
+      ).toBe(PolicyDecision.DENY);
+
+      // 2. The `gemini-fork` variant also caught.
+      expect(
+        (
+          await engine.check(
+            {
+              name: 'run_shell_command',
+              args: { command: 'gemini-fork help' },
+            },
+            undefined,
+          )
+        ).decision,
+      ).toBe(PolicyDecision.DENY);
+
+      // 3. `bash -c "gemini help"` — the outer `command` value starts
+      // with `bash`, NOT `gemini`, so the JSON-form `"command":"bash
+      // -c ..."` fails the `"command":"gemini` prefix at the top-level
+      // match. The DENY fires because the policy engine's sub-command
+      // splitter (policy-engine.ts ~ line 469) peels off the
+      // `bash -c '...'` wrapper and re-enters `check()` with
+      // `args:{command:'gemini help'}`. That recursive call hits the
+      // rule via the `(\s)` (space) terminator alternative. Cross-flagged
+      // in Phase 8 reviews — narration corrected here (both Opus angle 2
+      // and angle 3 caught the original wording).
+      expect(
+        (
+          await engine.check(
+            {
+              name: 'run_shell_command',
+              args: { command: 'bash -c "gemini help"' },
+            },
+            undefined,
+          )
+        ).decision,
+      ).toBe(PolicyDecision.DENY);
+
+      // 4. Unrelated command passes (default ASK_USER, not DENY).
+      expect(
+        (
+          await engine.check(
+            { name: 'run_shell_command', args: { command: 'ls -la' } },
+            undefined,
+          )
+        ).decision,
+      ).not.toBe(PolicyDecision.DENY);
+
+      // 5. Defense against accidental over-matching: a command that
+      // merely *contains* "gemini" mid-string (e.g. `echo gemini`) should
+      // NOT match — the pattern requires `"command":"gemini` at the
+      // start of the command value. The `echo` call falls through to
+      // the default ASK_USER decision.
+      expect(
+        (
+          await engine.check(
+            { name: 'run_shell_command', args: { command: 'echo gemini' } },
+            undefined,
+          )
+        ).decision,
+      ).not.toBe(PolicyDecision.DENY);
+    });
   });
 
   describe('addRule', () => {

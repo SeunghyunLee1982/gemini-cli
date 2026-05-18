@@ -26,6 +26,17 @@ import {
   WRITE_TODOS_TOOL_NAME,
   AGENT_TOOL_NAME,
 } from '../tools/tool-names.js';
+// Phase 8 — orchestrator disposition + auto-inlined swarm skill apply
+// regardless of model generation. The legacy path imports the same
+// option types and renderers from `snippets.ts` rather than duplicating
+// them; the disposition content is markdown that legacy models render
+// the same way modern ones do.
+import {
+  renderSwarmDisposition,
+  renderSwarmInline,
+  type SwarmDispositionOptions,
+  type SwarmInlineOptions,
+} from './snippets.js';
 
 // --- Options Structs ---
 
@@ -33,6 +44,13 @@ export interface SystemPromptOptions {
   preamble?: PreambleOptions;
   coreMandates?: CoreMandatesOptions;
   subAgents?: SubAgentOptions[];
+  /** Phase 8 — orchestrator-side swarm disposition block. Renders only when
+   * `swarm` is enabled and registered; gated upstream in `promptProvider`. */
+  swarmDisposition?: SwarmDispositionOptions;
+  /** Phase 8 — auto-inlined `swarm-collaboration` skill body. When set,
+   * the same skill is filtered out of `agentSkills` upstream so the
+   * orchestrator sees it once. */
+  swarmInline?: SwarmInlineOptions;
   agentSkills?: AgentSkillOptions[];
   hookContext?: boolean;
   primaryWorkflows?: PrimaryWorkflowsOptions;
@@ -125,6 +143,10 @@ ${renderPreamble(options.preamble)}
 ${renderCoreMandates(options.coreMandates)}
 
 ${renderSubAgents(options.subAgents)}
+${renderSwarmDisposition(options.swarmDisposition)}
+
+${renderSwarmInline(options.swarmInline)}
+
 ${renderAgentSkills(options.agentSkills)}
 
 ${renderHookContext(options.hookContext)}

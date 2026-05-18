@@ -28,6 +28,11 @@ import {
   GREP_TOOL_NAME,
   AGENT_TOOL_NAME,
 } from '../tools/tool-names.js';
+// Phase 8 — orchestrator-disposition gating. `SWARM_TOOL_NAME` is the
+// stable name; `SWARM_STATUS_TOOL_NAME` lives on the types module
+// (single SoT, see Phase 5 post-review).
+import { SWARM_TOOL_NAME } from '../agents/swarm/swarm-tool.js';
+import { SWARM_STATUS_TOOL_NAME } from '../agents/swarm/types.js';
 import { resolveModel, supportsModernFeatures } from '../config/models.js';
 import { DiscoveredMCPTool } from '../tools/mcp-tool.js';
 import {
@@ -60,13 +65,36 @@ export class PromptProvider {
       context.config.getApprovalMode?.() ?? ApprovalMode.DEFAULT;
     const isPlanMode = approvalMode === ApprovalMode.PLAN;
     const isYoloMode = approvalMode === ApprovalMode.YOLO;
-    const skills = context.config.getSkillManager().getSkills();
+    const allDiscoveredSkills = context.config.getSkillManager().getSkills();
     const toolNames = context.toolRegistry.getAllToolNames();
     const isTopicUpdateNarrationEnabled =
       topicUpdateNarrationOverride ??
       context.config.isTopicUpdateNarrationEnabled();
 
     const enabledToolNames = new Set(toolNames);
+
+    // Phase 8 — orchestrator disposition + skill auto-inline gating.
+    // The two layers share a single gate: the swarm tool (or its status
+    // companion) must be registered AND `experimental.swarm` must be on.
+    // When both hold, pull the `swarm-collaboration` skill out of the
+    // generic skills manifest and inline its SKILL.md body via
+    // `renderSwarmInline`. See
+    // `design-loop/swarm-orchestrator-disposition.md` Q2/Q3.
+    const swarmToolRegistered =
+      enabledToolNames.has(SWARM_TOOL_NAME) ||
+      enabledToolNames.has(SWARM_STATUS_TOOL_NAME);
+    const swarmDispositionEnabled =
+      swarmToolRegistered && context.config.isSwarmEnabled();
+    const swarmInlineSkill = swarmDispositionEnabled
+      ? allDiscoveredSkills.find((s) => s.name === 'swarm-collaboration')
+      : undefined;
+    // Skills shown in the generic manifest (`renderAgentSkills`). When
+    // we auto-inline `swarm-collaboration`, also filter it out of the
+    // manifest so the orchestrator doesn't see the same skill twice
+    // (once inline, once as a list entry).
+    const skills = swarmInlineSkill
+      ? allDiscoveredSkills.filter((s) => s.name !== 'swarm-collaboration')
+      : allDiscoveredSkills;
 
     const approvedPlanPath = context.config.getApprovedPlanPath();
 
@@ -163,6 +191,20 @@ export class PromptProvider {
               })),
           enabledToolNames.has(AGENT_TOOL_NAME),
         ),
+        // Phase 8 — orchestrator disposition layer. Both fields are
+        // populated only when swarm is enabled AND a swarm tool is
+        // registered (see the `swarmDispositionEnabled` computation
+        // upstream). `swarmInline` carries the SKILL.md body for the
+        // auto-inlined `swarm-collaboration` skill; the same skill is
+        // simultaneously removed from `agentSkills` to avoid double-
+        // listing.
+        swarmDisposition: { enabled: swarmDispositionEnabled },
+        swarmInline: swarmInlineSkill
+          ? {
+              name: swarmInlineSkill.name,
+              body: swarmInlineSkill.body,
+            }
+          : undefined,
         agentSkills: this.withSection(
           'agentSkills',
           () =>

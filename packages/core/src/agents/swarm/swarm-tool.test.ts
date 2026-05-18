@@ -21,7 +21,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { SwarmTool, SWARM_TOOL_NAME } from './swarm-tool.js';
+import {
+  SwarmTool,
+  SWARM_TOOL_NAME,
+  SWARM_TOOL_DESCRIPTION,
+} from './swarm-tool.js';
+import { SWARM_STATUS_TOOL_DESCRIPTION } from './swarm-status-tool.js';
 import { SwarmManager } from './swarm-manager.js';
 import { SubagentState, type SubagentProgress } from '../types.js';
 import { Kind } from '../../tools/tools.js';
@@ -300,5 +305,30 @@ describe('SwarmInvocation — Phase 5.1 progress streaming', () => {
     const tool = new SwarmTool(config, bus);
     expect(tool.name).toBe(SWARM_TOOL_NAME);
     expect(SWARM_TOOL_NAME).toBe('swarm');
+  });
+
+  // Phase 8 — drift guard on the orchestrator-disposition phrasing.
+  // The tool description is the orchestrator's first signal (Gemini's
+  // training prior is shell-heavy); the rewritten description gives it
+  // explicit "when to use / not to shell out" guidance plus an anti-
+  // pattern callout against recursive `gemini swarm` CLI invocation.
+  // Accidental removal of either phrase regresses Phase 8 disposition.
+  // See `design-loop/swarm-orchestrator-disposition.md` Q1.
+  it('Phase 8 — SWARM_TOOL_DESCRIPTION carries the no-CLI-verb anti-pattern', () => {
+    expect(SWARM_TOOL_DESCRIPTION).toMatch(/no `gemini swarm` verb/);
+    expect(SWARM_TOOL_DESCRIPTION).toMatch(/DO NOT shell out/);
+    // The "in-process" framing differentiates swarm from out-of-process
+    // patterns (the `async-pr-review` skill). Lock that too.
+    expect(SWARM_TOOL_DESCRIPTION).toMatch(/in-process/);
+  });
+
+  // Companion drift guard on the status-tool description prefix. Phase 8
+  // prepends "Read-only. Call at the start of any non-trivial swarm
+  // task." so the orchestrator gets a usage-time hint about when to call
+  // swarm_status (as the very first action of any swarm interaction).
+  it('Phase 8 — SWARM_STATUS_TOOL_DESCRIPTION starts with the "Read-only / call at start" usage hint', () => {
+    expect(SWARM_STATUS_TOOL_DESCRIPTION).toMatch(
+      /^Read-only\. Call at the start of any non-trivial swarm task\./,
+    );
   });
 });

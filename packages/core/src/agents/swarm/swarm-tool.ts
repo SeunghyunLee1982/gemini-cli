@@ -151,13 +151,19 @@ const SWARM_JSON_SCHEMA = {
   ],
 } as const;
 
-const SWARM_TOOL_DESCRIPTION =
-  'Manage a persistent swarm of long-lived Claude sub-agents. Use ' +
-  '`action: "spawn"` to create a new session (returns an agent_id), ' +
-  '`action: "message"` to send a prompt to an existing session (session ' +
-  'state is retained across calls), `action: "release"` to terminate a ' +
-  'session, and `action: "list"` to enumerate live sessions. Sessions are ' +
-  'in-memory and bound to the parent CLI process lifetime.';
+// Phase 8 — orchestrator disposition layer. The Gemini orchestrator
+// over-trusts shell and under-uses this tool by default; the description
+// has to do double duty as "what" + "when" + an explicit anti-pattern
+// callout against recursive `gemini` CLI invocation. See
+// `design-loop/swarm-orchestrator-disposition.md` Q1.
+export const SWARM_TOOL_DESCRIPTION =
+  'Spawn and message persistent Claude sub-agents in-process. Use ' +
+  'for parallel/multi-perspective work, isolating sub-tasks, or ' +
+  'specialist roles (reviewer, doc-writer). DO NOT shell out to ' +
+  '`gemini` — there is no `gemini swarm` verb; this in-process tool ' +
+  'IS the swarm. Actions: `spawn` (returns agent_id), `message` ' +
+  '(stateful turn on an existing session), `release`, `list`, ' +
+  '`amend_policy`. Pair with `swarm_status` for the live view.';
 
 /**
  * The `swarm` declarative tool. Phase 1: validates params and returns a

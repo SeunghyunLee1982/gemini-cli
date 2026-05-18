@@ -44,6 +44,13 @@ export interface SystemPromptOptions {
   preamble?: PreambleOptions;
   coreMandates?: CoreMandatesOptions;
   subAgents?: SubAgentOptions[];
+  // Phase 8 — see `design-loop/swarm-orchestrator-disposition.md` Q3/Q2.
+  // `swarmDisposition` adds the "when to use swarm / not shell" block;
+  // `swarmInline` carries the auto-inlined swarm-collaboration SKILL.md
+  // body when swarm is enabled (the skill is pulled out of the regular
+  // agentSkills manifest by `PromptProvider` to avoid 2-step indirection).
+  swarmDisposition?: SwarmDispositionOptions;
+  swarmInline?: SwarmInlineOptions;
   agentSkills?: AgentSkillOptions[];
   hookContext?: boolean;
   primaryWorkflows?: PrimaryWorkflowsOptions;
@@ -53,6 +60,35 @@ export interface SystemPromptOptions {
   sandbox?: SandboxOptions;
   interactiveYoloMode?: boolean;
   gitRepo?: GitRepoOptions;
+}
+
+/**
+ * Phase 8 — gating struct for the orchestrator-side swarm disposition
+ * block. Kept as a struct rather than a bare boolean so v2 can add fields
+ * (e.g., max-session caps to surface to the model) without renaming the
+ * option.
+ */
+export interface SwarmDispositionOptions {
+  /**
+   * True when the orchestrator has the `swarm` (or `swarm_status`) tool
+   * registered AND `Config.isSwarmEnabled()` is on. Both conditions are
+   * required — this is the AND-gate for the entire prompt block.
+   */
+  enabled: boolean;
+}
+
+/**
+ * Phase 8 — payload for the auto-inlined swarm-collaboration skill body.
+ * The body text is the SKILL.md content rendered verbatim (no metadata,
+ * just the markdown body) — `PromptProvider` pulls this off the skill
+ * loader's `body` field. Skipped entirely when swarm is disabled (the
+ * skill stays in the regular `agentSkills` manifest in that case).
+ */
+export interface SwarmInlineOptions {
+  /** For the rendered heading (`# Skill — <name> (auto-loaded)`). */
+  name: string;
+  /** SKILL.md body, already trimmed by the loader. */
+  body: string;
 }
 
 export interface PreambleOptions {
@@ -140,6 +176,10 @@ ${renderPreamble(options.preamble)}
 ${renderCoreMandates(options.coreMandates)}
 
 ${renderSubAgents(options.subAgents)}
+
+${renderSwarmDisposition(options.swarmDisposition)}
+
+${renderSwarmInline(options.swarmInline)}
 
 ${renderAgentSkills(options.agentSkills)}
 
@@ -330,6 +370,65 @@ You have access to the following specialized skills. To activate a skill and rec
 <available_skills>
 ${skillsXml}
 </available_skills>`.trim();
+}
+
+/**
+ * Phase 8 — orchestrator-side swarm disposition block. Empty unless the
+ * caller (`PromptProvider`) has confirmed both `Config.isSwarmEnabled()`
+ * AND that the swarm tool is registered. See
+ * `design-loop/swarm-orchestrator-disposition.md` Q3 for the locked block
+ * text and the single inline `<example>` (deliberately a single
+ * conceptual block so the example sits next to the usage rules).
+ */
+export function renderSwarmDisposition(
+  options?: SwarmDispositionOptions,
+): string {
+  if (!options?.enabled) return '';
+  return `
+# Swarm (experimental, enabled)
+
+You have a \`swarm\` tool for long-lived Claude sub-agents in-process.
+Use it for parallel independent work, multi-perspective review, or
+isolating noisy sub-tasks. Do NOT invoke \`gemini\`/\`gemini-fork\`
+via \`run_shell_command\` — there is no CLI verb; the in-process
+tool IS the mechanism. Call \`swarm_status\` before non-trivial
+swarm work. Skip swarm for single-target lookups (use read_file /
+grep directly).
+
+<example>
+user: review my diff from two angles
+assistant: <thinking>The user wants multi-perspective review. Use
+the swarm tool to spawn parallel reviewers.</thinking>
+swarm({
+  action: 'spawn',
+  model: 'sonnet',
+  role: 'correctness-reviewer',
+  charter: 'verify behavior',
+  system_prompt: '...'
+})
+</example>`.trim();
+}
+
+/**
+ * Phase 8 — auto-inlines a single skill's SKILL.md body. Currently only
+ * the `swarm-collaboration` skill is auto-inlined (and only when swarm is
+ * enabled); see `design-loop/swarm-orchestrator-disposition.md` Q2. The
+ * skill is simultaneously pulled out of the `agentSkills` manifest by
+ * `PromptProvider`, so the orchestrator sees the protocol body without
+ * having to call `activate_skill` first.
+ */
+export function renderSwarmInline(options?: SwarmInlineOptions): string {
+  if (!options) return '';
+  // Phase 8 review (Gemini angle 3): skip the section entirely when the
+  // body is missing or whitespace-only — otherwise we'd render a dangling
+  // `# Skill — <name> (auto-loaded)` header with no content beneath it,
+  // which is confusing to the orchestrator and wastes tokens.
+  const trimmedBody = options.body.trim();
+  if (!trimmedBody) return '';
+  return `
+# Skill — ${options.name} (auto-loaded)
+
+${trimmedBody}`.trim();
 }
 
 export function renderHookContext(enabled?: boolean): string {

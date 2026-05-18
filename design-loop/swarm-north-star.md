@@ -168,14 +168,21 @@ R4 의 `request_capability` 도구는 v2 에서 부활 — 단순히 "orchestrat
 
 ## 로드맵 (3 milestones)
 
-### v1.x — Scope Bridge (다음 커밋 범위)
+### v1.x — Scope Bridge (Phase 6 — shipped)
 
 - `swarm spawn` 이 `policy: PolicyRule[]` 받음 (`tools: string[]` 과 공존, 양쪽
-  허용 — back-compat)
-- 매 sub-agent `tool_use` 가 `PolicyEngine.check()` 통과 (subagent 필드 활용)
-- 사이드카 `swarm-policy.toml` (tier 2 기본값, `subagent=*`)
-- `/audit <agent_id>` 명령 ship
-- `swarm_status.effective_policy_summary` 확장
+  허용 — back-compat). 각 rule 은 매니저가 `subagent`/`source`/`priority` 를
+  강제 — tier-2 (EXTENSION_POLICY_TIER) band 안에 들어가서 user/admin 천장 아래.
+- 매 sub-agent `tool_use` 가 `PolicyEngine.check(subagent=agent_id)` 통과
+  (scheduler 가 이미 threading).
+- 사이드카 `<repo>/.gemini/swarm-policy.toml` — workspace 정책 로딩과 같이
+  들어와서 **tier 3 (WORKSPACE_POLICY_TIER)** 으로 등록. `subagent` 없는 rule 은
+  자동으로 `'*'` 와일드카드 스탬핑 (`PolicyEngine.matchRule` 가 `'*'` 를
+  "subagent 가 비어있지 않은 모든 caller" 매치로 처리하므로 orchestrator 는 영향
+  안 받음).
+- `/audit <agent_id>` 명령 ship.
+- `swarm_status.effective_policy_summary` (counts allow/deny/ask_user + top
+  rules by priority) 확장.
 
 ### v2 — north-star spine
 

@@ -69,7 +69,9 @@ temp_agents/
 # conductor extension and planning directories
 conductor/
 
-# Design-loop discussion artifacts (R-round briefings, model responses)
-# Only swarm-north-star.md is tracked (force-added).
+# Design-loop discussion artifacts (R-round briefings, model responses).
+# LOCKED architectural references are tracked; R-round discussions stay
+# local-only. Add new LOCKED docs as exceptions when they're produced.
 design-loop/*
 !design-loop/swarm-north-star.md
+!design-loop/swarm-orchestrator-disposition.md

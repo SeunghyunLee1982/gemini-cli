@@ -322,6 +322,21 @@ subagent).
 The `/audit <agent_id>` slash command renders the effective policy + recent
 activity for one live swarm sub-agent.
 
+### Orchestrator disposition (Phase 8 v1.x)
+
+When `experimental.swarm: true`, the orchestrator's system prompt gains a
+dedicated "Swarm (experimental, enabled)" section with usage guidance,
+anti-pattern callouts (no `gemini swarm` CLI verb), and an inline `<example>`.
+The `swarm-collaboration` SKILL.md is also auto-inlined into the prompt rather
+than left in the activate-skill manifest, so the orchestrator sees the protocol
+without an extra indirection step.
+
+Defense in depth: a tier-1 default-deny `PolicyRule` blocks `run_shell_command`
+invocations whose `command` arg starts with `gemini` or `gemini-fork`,
+redirecting to the in-process `swarm` tool. tier-4 user policy can override.
+Full rationale + R1/R2 ground-truth correction on the JSON-shape `argsPattern`
+lives in `design-loop/swarm-orchestrator-disposition.md`.
+
 ### P1 safety caps (v1.x)
 
 - `max_turns` on `spawn` is capped at 50.

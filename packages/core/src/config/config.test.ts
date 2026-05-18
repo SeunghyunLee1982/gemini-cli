@@ -24,7 +24,7 @@ import { DEFAULT_MAX_ATTEMPTS } from '../utils/retry.js';
 import { ExperimentFlags } from '../code_assist/experiments/flagNames.js';
 import { debugLogger } from '../utils/debugLogger.js';
 import { coreEvents } from '../utils/events.js';
-import { ApprovalMode } from '../policy/types.js';
+import { ApprovalMode, PolicyDecision } from '../policy/types.js';
 import {
   HookType,
   HookEventName,
@@ -1583,6 +1583,47 @@ describe('Server Config (config.ts)', () => {
           (call) => call[0] instanceof vi.mocked(ShellTool),
         );
         expect(wasShellToolRegistered).toBe(true);
+      });
+    });
+
+    // Phase 8 — runtime teeth for the orchestrator-disposition prompt
+    // block. When `experimental.swarm: true`, Config installs a tier-1
+    // default-deny `PolicyRule` on `run_shell_command` whose `argsPattern`
+    // catches `gemini` / `gemini-fork` invocations (in their JSON-
+    // stringified args form). Without this, the disposition block is just
+    // advice; with it, the engine actually refuses to let the orchestrator
+    // shell out recursively. tier-4 user policy can still override the
+    // rule (ceiling dominance).
+    //
+    // The rule is registered inside `createToolRegistry()` (alongside
+    // SwarmTool / SwarmStatusTool registration), so `initialize()` must
+    // run before the rule appears on the engine.
+    describe('Phase 8 — recursive-gemini policy guard', () => {
+      it('Phase 8 — Config.isSwarmEnabled() registers the recursive-gemini deny rule on the policy engine', async () => {
+        const config = new Config({ ...baseParams, swarm: true });
+        await config.initialize();
+        const rules = config.getPolicyEngine().getRules();
+        const guard = rules.find((r) => r.source === 'swarm-recursive-guard');
+        expect(guard).toBeDefined();
+        expect(guard?.toolName).toBe('run_shell_command');
+        expect(guard?.decision).toBe(PolicyDecision.DENY);
+        // Drift guard on the JSON-shape regex: must look for
+        // `"command":"gemini..."` in the stableStringify output, NOT raw
+        // shell text. The locked LOCKED-design test in
+        // `policy-engine.test.ts` proves the pattern actually matches; here
+        // we just lock the SHAPE so a future refactor doesn't accidentally
+        // swap in a raw-shell regex.
+        expect(guard?.argsPattern?.source).toContain('"command":"');
+        expect(guard?.argsPattern?.source).toContain('gemini');
+        expect(guard?.denyMessage).toMatch(/swarm/);
+      });
+
+      it('Phase 8 — recursive-gemini guard is NOT registered when swarm is disabled', async () => {
+        const config = new Config({ ...baseParams, swarm: false });
+        await config.initialize();
+        const rules = config.getPolicyEngine().getRules();
+        const guard = rules.find((r) => r.source === 'swarm-recursive-guard');
+        expect(guard).toBeUndefined();
       });
     });
   });

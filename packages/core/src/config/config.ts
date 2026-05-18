@@ -150,6 +150,7 @@ import type { EventEmitter } from 'node:events';
 import { PolicyEngine } from '../policy/policy-engine.js';
 import {
   ApprovalMode,
+  PolicyDecision,
   type PolicyEngineConfig,
   type PolicyRule,
   type SafetyCheckerRule,
@@ -180,7 +181,10 @@ import { fetchAdminControls } from '../code_assist/admin/admin_controls.js';
 import { isSubpath, resolveToRealPath } from '../utils/paths.js';
 import { InjectionService } from './injectionService.js';
 import { ExecutionLifecycleService } from '../services/executionLifecycleService.js';
-import { WORKSPACE_POLICY_TIER } from '../policy/config.js';
+import {
+  DEFAULT_POLICY_TIER,
+  WORKSPACE_POLICY_TIER,
+} from '../policy/config.js';
 import { loadPoliciesFromToml } from '../policy/toml-loader.js';
 
 import { CheckerRunner } from '../safety/checker-runner.js';
@@ -4156,6 +4160,34 @@ export class Config implements McpContext, AgentLoopContext {
       maybeRegister(SwarmStatusTool, () =>
         registry.registerTool(new SwarmStatusTool(this, this.messageBus)),
       );
+
+      // Phase 8: tier-1 default-deny on recursive `gemini`/`gemini-fork`
+      // invocation via `run_shell_command`. The orchestrator's prior
+      // strongly favors shell for agentic tasks; this denial is the
+      // runtime teeth behind the disposition prompt block.
+      //
+      // Pattern matches the JSON-stringified args form (the engine runs
+      // `RegExp.test(stableStringify(toolCall.args))` — see
+      // `PolicyEngine.matchRule` around `policy-engine.ts:179-191`), NOT
+      // the raw shell text. Termination class `(\s|"|\\)` keeps
+      // `gemini-something` (a different binary) from accidentally
+      // matching: only `gemini` / `gemini-fork` followed by whitespace,
+      // end-of-string-quote, or an escape are caught.
+      //
+      // tier-4 user policy can override this (their ceiling dominates),
+      // and the engine's shell sub-command splitter (`policy-engine.ts:
+      // 469-475`) recursively re-checks `bash -c '…'` / `cd && …` forms
+      // so wrappers can't dodge the rule.
+      this.policyEngine.addRule({
+        toolName: 'run_shell_command',
+        argsPattern: /"command":"(gemini|gemini-fork)(\s|"|\\)/,
+        decision: PolicyDecision.DENY,
+        priority: DEFAULT_POLICY_TIER,
+        source: 'swarm-recursive-guard',
+        denyMessage:
+          'Do not invoke `gemini` recursively via `run_shell_command`. ' +
+          'Use the in-process `swarm` tool (action: spawn) instead.',
+      });
     }
 
     await registry.discoverAllTools();

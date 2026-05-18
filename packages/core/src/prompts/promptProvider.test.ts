@@ -20,10 +20,14 @@ import { ApprovalMode } from '../policy/types.js';
 import { DiscoveredMCPTool } from '../tools/mcp-tool.js';
 import { MockTool } from '../test-utils/mock-tool.js';
 import { UPDATE_TOPIC_TOOL_NAME } from '../tools/tool-names.js';
+import { SWARM_TOOL_NAME } from '../agents/swarm/swarm-tool.js';
+import { SWARM_STATUS_TOOL_NAME } from '../agents/swarm/types.js';
 import { TopicState } from '../config/topicState.js';
 import type { CallableTool } from '@google/genai';
 import type { MessageBus } from '../confirmation-bus/message-bus.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
+import type { SkillDefinition } from '../skills/skillManager.js';
+import { renderSwarmInline } from './snippets.js';
 
 vi.mock('../tools/memoryTool.js', async (importOriginal) => {
   const actual = await importOriginal();
@@ -413,6 +417,151 @@ describe('PromptProvider', () => {
       expect(prompt).toContain(UPDATE_TOPIC_TOOL_NAME);
       expect(prompt).toContain('No Chitchat');
       expect(prompt).toContain('Topic Model');
+    });
+  });
+
+  // Phase 8 — orchestrator disposition + swarm-collaboration auto-inline.
+  // See `design-loop/swarm-orchestrator-disposition.md`. The two layers
+  // share the same gate: `Config.isSwarmEnabled()` AND a registered swarm
+  // tool. When the gate fires:
+  //   * `renderSwarmDisposition` block appears in the system prompt
+  //   * the `swarm-collaboration` skill body is auto-inlined and the
+  //     skill is dropped from the regular `<available_skills>` manifest.
+  describe('Phase 8 — orchestrator disposition + swarm skill auto-inline', () => {
+    // Tiny SKILL.md body sentinel. Keeping it short — long enough to be
+    // recognizable in the output, short enough not to bloat assertions.
+    const SWARM_SKILL_BODY = 'SWARM-PROTOCOL-BODY-SENTINEL-Phase8-test';
+    const swarmCollab: SkillDefinition = {
+      name: 'swarm-collaboration',
+      description: 'Codifies the swarm cross-pollination protocol.',
+      location: '/fake/.gemini/skills/swarm-collaboration/SKILL.md',
+      body: SWARM_SKILL_BODY,
+    };
+    const otherSkill: SkillDefinition = {
+      name: 'unrelated-skill',
+      description: 'Has nothing to do with swarm.',
+      location: '/fake/.gemini/skills/unrelated-skill/SKILL.md',
+      body: 'unrelated body',
+    };
+
+    function setupSwarmEnabled(enabled: boolean): void {
+      // Inject the swarm tool name into the registered-tools set so the
+      // `swarmToolRegistered` predicate in `PromptProvider` fires (or
+      // doesn't, when we want the negative case).
+      (mockConfig.getToolRegistry as ReturnType<typeof vi.fn>).mockReturnValue({
+        getAllToolNames: vi
+          .fn()
+          .mockReturnValue(enabled ? [SWARM_TOOL_NAME] : []),
+        getAllTools: vi.fn().mockReturnValue([]),
+      });
+      (mockConfig.getSkillManager as ReturnType<typeof vi.fn>).mockReturnValue({
+        getSkills: vi.fn().mockReturnValue([swarmCollab, otherSkill]),
+      });
+      // `isSwarmEnabled` is the second half of the AND-gate.
+      (
+        mockConfig as unknown as { isSwarmEnabled: () => boolean }
+      ).isSwarmEnabled = vi.fn().mockReturnValue(enabled);
+    }
+
+    it('Phase 8 — renderSwarmDisposition included when swarm enabled', () => {
+      setupSwarmEnabled(true);
+      const provider = new PromptProvider();
+      const prompt = provider.getCoreSystemPrompt(mockConfig);
+
+      // Header phrase from the locked block.
+      expect(prompt).toContain('# Swarm (experimental, enabled)');
+      // Core anti-pattern phrasing (matches the locked text).
+      expect(prompt).toContain('no CLI verb');
+      // The worked example must be there (single inline `<example>` per
+      // the LOCKED design Q3).
+      expect(prompt).toContain('<example>');
+    });
+
+    it('Phase 8 — renderSwarmDisposition excluded when swarm disabled', () => {
+      setupSwarmEnabled(false);
+      const provider = new PromptProvider();
+      const prompt = provider.getCoreSystemPrompt(mockConfig);
+
+      expect(prompt).not.toContain('# Swarm (experimental, enabled)');
+    });
+
+    it('Phase 8 — swarm-collaboration auto-inlined when swarm enabled', () => {
+      setupSwarmEnabled(true);
+      const provider = new PromptProvider();
+      const prompt = provider.getCoreSystemPrompt(mockConfig);
+
+      // Inline heading + body sentinel must appear in the body of the
+      // prompt.
+      expect(prompt).toContain('# Skill — swarm-collaboration (auto-loaded)');
+      expect(prompt).toContain(SWARM_SKILL_BODY);
+
+      // And the same skill must NOT also appear in the regular
+      // `<available_skills>` manifest, or the orchestrator would see it
+      // twice. The unrelated skill should still appear in the manifest.
+      const manifestMatches = prompt.match(
+        /<skill>\s*<name>swarm-collaboration<\/name>/g,
+      );
+      expect(manifestMatches).toBeNull();
+      expect(prompt).toContain('<name>unrelated-skill</name>');
+    });
+
+    it('Phase 8 — swarm-collaboration appears in manifest when swarm disabled', () => {
+      setupSwarmEnabled(false);
+      const provider = new PromptProvider();
+      const prompt = provider.getCoreSystemPrompt(mockConfig);
+
+      // No auto-inline.
+      expect(prompt).not.toContain(
+        '# Skill — swarm-collaboration (auto-loaded)',
+      );
+      // Lives in the regular manifest instead.
+      expect(prompt).toContain('<name>swarm-collaboration</name>');
+    });
+
+    // Phase 8 review (Gemini angle 3): renderSwarmInline must not emit a
+    // dangling `# Skill — <name> (auto-loaded)` header when the skill body
+    // is empty or whitespace-only. Guards against future skill loaders
+    // returning empty `body` (deleted file, parse failure, etc.) silently
+    // bloating the prompt with a header and nothing beneath it.
+    it('Phase 8 — renderSwarmInline returns empty string for whitespace-only body', () => {
+      expect(renderSwarmInline({ name: 'swarm-collaboration', body: '' })).toBe(
+        '',
+      );
+      expect(
+        renderSwarmInline({ name: 'swarm-collaboration', body: '   \n\n  ' }),
+      ).toBe('');
+      // Non-empty body still renders.
+      expect(
+        renderSwarmInline({
+          name: 'swarm-collaboration',
+          body: 'real content',
+        }),
+      ).toContain('# Skill — swarm-collaboration (auto-loaded)');
+    });
+
+    // Phase 8 review (Opus angle 3): the registered-tool predicate is the OR
+    // of `SWARM_TOOL_NAME` ∨ `SWARM_STATUS_TOOL_NAME`. The earlier tests
+    // only cover the `swarm`-registered branch. This case pins the
+    // asymmetric "only `swarm_status` registered, not `swarm`" branch — the
+    // disposition + inline must still fire because sub-agents themselves
+    // get `swarm_status` registered without `swarm` (recursion guard,
+    // `swarm-manager.ts` filter).
+    it('Phase 8 — disposition fires when only swarm_status is registered', () => {
+      (mockConfig.getToolRegistry as ReturnType<typeof vi.fn>).mockReturnValue({
+        getAllToolNames: vi.fn().mockReturnValue([SWARM_STATUS_TOOL_NAME]),
+        getAllTools: vi.fn().mockReturnValue([]),
+      });
+      (mockConfig.getSkillManager as ReturnType<typeof vi.fn>).mockReturnValue({
+        getSkills: vi.fn().mockReturnValue([swarmCollab, otherSkill]),
+      });
+      (
+        mockConfig as unknown as { isSwarmEnabled: () => boolean }
+      ).isSwarmEnabled = vi.fn().mockReturnValue(true);
+      const provider = new PromptProvider();
+      const prompt = provider.getCoreSystemPrompt(mockConfig);
+
+      expect(prompt).toContain('# Swarm (experimental, enabled)');
+      expect(prompt).toContain('# Skill — swarm-collaboration (auto-loaded)');
     });
   });
 });
