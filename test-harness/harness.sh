@@ -50,7 +50,12 @@ cmd_new() {
     cp -r "$src/SEED/." "$run/"
   fi
 
-  # 2. .gemini/settings.json — swarm enabled, plan-mode allowed for testing
+  # 2. .gemini/settings.json — swarm enabled, plan-mode allowed for testing,
+  # auto-update disabled so a sandbox launch never spawns a background
+  # `npm install -g @google/gemini-cli@nightly` that would clobber the
+  # PATH `gemini` binary (the upstream one, NOT the fork — but we keep
+  # things from changing under the user's feet during a test run).
+  # See `packages/cli/src/utils/handleAutoUpdate.ts`.
   mkdir -p "$run/.gemini/skills"
   cat > "$run/.gemini/settings.json" <<'EOF'
 {
@@ -61,6 +66,10 @@ cmd_new() {
     "auth": {
       "selectedType": "oauth-personal"
     }
+  },
+  "general": {
+    "enableAutoUpdate": false,
+    "enableAutoUpdateNotification": false
   }
 }
 EOF
