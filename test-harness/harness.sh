@@ -3,8 +3,8 @@
 #
 # Subcommands:
 #   harness.sh new <scenario>      Create a fresh sandbox under
-#                                  ~/swarm-test/runs/<scenario>-<ts>/, seed
-#                                  it, print the invocation + prompt.
+#                                  ~/gemini-fork/sandboxes/<scenario>-<ts>/,
+#                                  seed it, print the invocation + prompt.
 #   harness.sh analyze <run_dir>   Walk the latest gemini chat record for
 #                                  that sandbox and dump swarm tool calls
 #                                  + results. Use `latest` as run_dir to
@@ -22,7 +22,7 @@ set -euo pipefail
 
 HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FORK_ROOT="$(cd "$HARNESS_DIR/.." && pwd)"
-RUNS_ROOT="${SWARM_TEST_ROOT:-$HOME/swarm-test/runs}"
+RUNS_ROOT="${SWARM_TEST_ROOT:-$HOME/gemini-fork/sandboxes}"
 SCENARIO_ROOT="$HARNESS_DIR/scenarios"
 
 # ---------------------------------------------------------------------------

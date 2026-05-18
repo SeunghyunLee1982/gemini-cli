@@ -29,7 +29,7 @@ ls test-harness/scenarios/
 test-harness/harness.sh new swarm-review
 
 # 3. Run the interactive session from the sandbox dir
-cd ~/swarm-test/runs/swarm-review-<timestamp>/
+cd ~/gemini-fork/sandboxes/swarm-review-<timestamp>/
 gemini-fork
 # (paste prompt from PROMPT.md, work through scenario, exit)
 
@@ -77,7 +77,7 @@ mkdir -p test-harness/scenarios/<name>/SEED
 Each `harness.sh new <scenario>` creates:
 
 ```
-~/swarm-test/runs/<scenario>-<YYYYMMDD-HHMMSS>/
+~/gemini-fork/sandboxes/<scenario>-<YYYYMMDD-HHMMSS>/
 ├── .gemini/
 │   └── settings.json          # experimental.swarm=true, OAuth
 ├── .env                       # ANTHROPIC_API_KEY (for swarm sub-agents)
@@ -90,5 +90,5 @@ Sandboxes are persistent (not auto-deleted) so you can poke at the post-run
 filesystem (`README.md` for policy-scope, etc.). Clean up manually when desired:
 
 ```bash
-rm -rf ~/swarm-test/runs/*-<old-pattern>/
+rm -rf ~/gemini-fork/sandboxes/*-<old-pattern>/
 ```

@@ -347,9 +347,9 @@ vitest mocks — use the out-of-workspace test harness at
 - `~/.local/bin/gemini-fork` launcher runs this repo's `bundle/gemini.js` while
   leaving the upstream `gemini` 0.42 on PATH alone.
 - `test-harness/harness.sh new <scenario>` creates a fresh sandbox at
-  `~/swarm-test/runs/<scenario>-<ts>/` with seed code, `.gemini/settings.json`
-  (swarm enabled, OAuth), and `.env` (`ANTHROPIC_API_KEY` copied from the fork's
-  parent `.env`).
+  `~/gemini-fork/sandboxes/<scenario>-<ts>/` with seed code,
+  `.gemini/settings.json` (swarm enabled, OAuth), and `.env`
+  (`ANTHROPIC_API_KEY` copied from the fork's parent `.env`).
 - User then `cd`s into the sandbox, runs `gemini-fork` interactively (OAuth
   orchestrator), pastes the prompt from `PROMPT.md`, exits.
 - `test-harness/harness.sh analyze latest` parses the matching chat record under

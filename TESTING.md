@@ -46,10 +46,10 @@ resulting chat record. Upstream `gemini` 0.42 on your PATH stays untouched.
 test-harness/harness.sh new swarm-review
 
 #    Prints the sandbox dir, e.g.
-#    ~/swarm-test/runs/swarm-review-20260519-023335/
+#    ~/gemini-fork/sandboxes/swarm-review-20260519-023335/
 
 # 2. Move into the sandbox.
-cd ~/swarm-test/runs/swarm-review-20260519-023335/
+cd ~/gemini-fork/sandboxes/swarm-review-20260519-023335/
 
 # 3. Launch interactively.
 gemini-fork
@@ -107,7 +107,7 @@ harness needs to change for new scenarios.
 Each run creates:
 
 ```
-~/swarm-test/runs/<scenario>-<YYYYMMDD-HHMMSS>/
+~/gemini-fork/sandboxes/<scenario>-<YYYYMMDD-HHMMSS>/
 ├── .gemini/
 │   └── settings.json   # experimental.swarm=true + OAuth
 ├── .env                # ANTHROPIC_API_KEY for swarm sub-agents
