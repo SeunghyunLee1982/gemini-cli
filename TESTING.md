@@ -25,15 +25,23 @@ resulting chat record. Upstream `gemini` 0.42 on your PATH stays untouched.
    which gemini-fork-harness      # → ~/.local/bin/gemini-fork-harness
    ```
 
-2. **Build at least once.** From the repo root:
+2. **Build the executable bundle at least once.** From the repo root:
 
    ```bash
    npm install
-   npm run build
+   npm run bundle    # ← this is the one that writes bundle/gemini.js
    ```
 
-   The fork's bundle gets rebuilt by `npm run build`. Pass `GEMINI_FORK_BUILD=1`
-   to `gemini-fork` to rebuild on launch.
+   > **`npm run build` is NOT enough** — `build` only writes to
+   > `packages/*/dist/`. The executable bundle `bundle/gemini.js` is produced by
+   > `npm run bundle` (esbuild + asset copy). Running `gemini-fork` after
+   > `build` alone silently executes a stale bundle and the orchestrator misses
+   > every code change.
+
+   Pass `GEMINI_FORK_BUILD=1` to `gemini-fork` to re-bundle on launch. The
+   launcher also runs a freshness check on each invocation and warns loudly when
+   `bundle/gemini.js` predates the newest `packages/*/src` source change
+   (`GEMINI_FORK_NO_CHECK=1` to silence).
 
 3. **API key.** Swarm sub-agents need `ANTHROPIC_API_KEY`. The harness copies it
    from this repo's `.env` (one directory up from the repo root by default) into
@@ -79,10 +87,20 @@ gemini-fork-harness analyze latest
 - Tool-call frequency (with `swarm` / `swarm_status` highlighted)
 - Per-swarm-action summary: action (spawn/message/release/list), agent id, role,
   policy-rule count when present, success/error
+- **Phase fingerprint**: which Phases' artifacts (Phase 4 / 5 / 5.1 / 6 / 8) are
+  observable in the session. Missing markers → bundle predates that Phase or the
+  gate condition failed at registration time.
+- **Anti-pattern signals**: explicit warnings when known failure modes appear —
+  `Tool "swarm" not found` errors, recursive `gemini`/`gemini-fork` shell
+  invocations without the Phase 8 deny rule firing, shell-vs-swarm ratio
+  anomalies, and "TUI thinking… stuck" heuristic (user asks "are you done?"
+  shortly after the orchestrator's last message).
 - Last orchestrator message (truncated to 1000 chars)
 
 Cross-reference against the scenario's `EXPECTED.md` to confirm the swarm
-behaved correctly.
+behaved correctly. The Phase-fingerprint and anti-pattern sections are
+specifically designed to surface the "stale bundle" silent-failure mode that
+previously cost a full live-test session to detect.
 
 ## Built-in scenarios
 

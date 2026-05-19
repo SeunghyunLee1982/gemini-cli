@@ -266,7 +266,141 @@ for i, c in enumerate(swarm_calls, 1):
                 except json.JSONDecodeError:
                     print(f"          out: {output[:120]}")
 
-# Last assistant message (final orchestrator answer).
+# --- Phase fingerprint detection ---------------------------------------
+# Search the chat record for prompt/tool/output markers that should ONLY
+# appear when the corresponding Phase code is live in the running bundle.
+# If a Phase's markers are absent, the bundle is likely older than that
+# Phase's commit (or the gate condition failed). This is the diagnostic
+# that would have caught the silent "ran against stale bundle" failure.
+blob = jsonl.read_text()
+phases = {
+    "Phase 4 (authority attribution)":
+        ["Requested by sub-agent"],
+    "Phase 5 (stateful collaborator)":
+        ["swarm_status", "<swarm_dir>", "SWARM_PROTOCOL"],
+    "Phase 5.1 (TUI progress publishing)":
+        ["isSubagentProgress"],
+    "Phase 6 (v1.x scope bridge)":
+        ["swarm:doc-writer", "swarm:reviewer", "effective_policy_summary",
+         "swarm-recursive-guard", "/audit"],
+    "Phase 8 (orchestrator disposition)":
+        ["# Swarm (experimental, enabled)",
+         "# Skill — swarm-collaboration (auto-loaded)",
+         "no CLI verb",
+         "swarm-recursive-guard"],
+}
+print()
+print("=== Phase fingerprint ===")
+for phase, markers in phases.items():
+    hits = [m for m in markers if m in blob]
+    if hits:
+        print(f"  ✓ {phase}: {len(hits)}/{len(markers)} markers visible")
+    else:
+        print(f"  ✗ {phase}: NO markers visible — bundle may predate this Phase")
+
+# --- Anti-pattern detection --------------------------------------------
+# Surface specific failure modes that have cost a live-test session in
+# the past. Each WARN line is one diagnostic the user (or me) would
+# otherwise have to dig out by hand.
+print()
+print("=== anti-pattern signals ===")
+
+# 1. Swarm tool registration failure: model tried swarm, got "not found".
+swarm_not_found = sum(
+    1 for r in records for c in (r.get("toolCalls") or [])
+    if c.get("name") == "swarm"
+    and any(
+        isinstance(fr, dict)
+        and isinstance(fr.get("functionResponse", {}).get("response", {}).get("error"), str)
+        and 'not found' in fr["functionResponse"]["response"]["error"].lower()
+        for fr in (c.get("result") or []) if isinstance(c.get("result"), list)
+    )
+)
+if swarm_not_found:
+    print(f"  ⚠  {swarm_not_found}× `swarm` tool calls returned `Tool \"swarm\" not found`.")
+    print("     → likely cause: bundle predates Phase 5, OR isSwarmEnabled() returned false at registration time.")
+    print("     → fix: (cd $REPO && npm run bundle), then retest from a fresh sandbox.")
+
+# 2. Recursive gemini invocations: shell calls that start with `gemini`
+#    or `gemini-fork`. Phase 8's tier-1 deny rule should catch these.
+recursive = 0
+for r in records:
+    for c in (r.get("toolCalls") or []):
+        if c.get("name") != "run_shell_command":
+            continue
+        cmd = (c.get("args") or {}).get("command", "")
+        # First non-cd-prefix token in the command.
+        head = ""
+        for tok in cmd.split():
+            if tok in ("cd", "env", "&&", "||", ";") or tok.startswith(("&&", "||")):
+                continue
+            head = tok
+            break
+        if head in ("gemini", "gemini-fork") or head.endswith("/gemini") or head.endswith("/gemini-fork"):
+            recursive += 1
+if recursive:
+    deny_fired = blob.count("Do not invoke gemini recursively")
+    if deny_fired:
+        print(f"  ℹ  {recursive}× recursive `gemini` shell calls; deny rule fired {deny_fired}× (Phase 8 layer 4 working).")
+    else:
+        print(f"  ⚠  {recursive}× recursive `gemini` shell calls; deny rule did NOT fire.")
+        print("     → likely cause: bundle predates Phase 8 OR Phase 6's PolicyEngine guard skipped.")
+        print("     → fix: rebuild bundle (`npm run bundle`); verify Phase 8 markers above.")
+
+# 3. Lots of run_shell_command vs no swarm: orchestrator went off-script.
+shell_count = tool_counts.get("run_shell_command", 0)
+swarm_call_count = tool_counts.get("swarm", 0) + tool_counts.get("swarm_status", 0)
+if shell_count >= 10 and swarm_call_count == 0:
+    print(f"  ⚠  {shell_count}× shell calls with ZERO swarm/swarm_status invocations.")
+    print("     → orchestrator likely fell back to shell-based 'sequential workers' pattern.")
+    print("     → check Phase 8 markers above; if absent, rebuild bundle.")
+elif shell_count > swarm_call_count * 5 and swarm_call_count > 0:
+    print(f"  ⚠  shell calls ({shell_count}) >> swarm calls ({swarm_call_count})  (ratio > 5×).")
+    print("     → orchestrator may still prefer shell despite swarm being available.")
+
+# 4. Long gaps between final assistant message and user re-prompt may
+#    indicate UI got stuck on "thinking..." (the user observed this).
+def _ts(r):
+    return r.get("timestamp") or ""
+import datetime as _dt
+user_recs = [(i, r) for i, r in enumerate(records) if r.get("type") == "user"]
+for idx, (i, r) in enumerate(user_recs):
+    if idx == 0:
+        continue
+    # Previous gemini record.
+    prev_gem = None
+    for j in range(i - 1, -1, -1):
+        if records[j].get("type") == "gemini":
+            text = (records[j].get("content") or "")
+            if isinstance(text, str) and text.strip():
+                prev_gem = (j, records[j])
+                break
+    if not prev_gem:
+        continue
+    try:
+        t_user = _dt.datetime.fromisoformat(_ts(r).replace("Z", "+00:00"))
+        t_gem = _dt.datetime.fromisoformat(_ts(prev_gem[1]).replace("Z", "+00:00"))
+        gap = (t_user - t_gem).total_seconds()
+    except Exception:
+        continue
+    content = r.get("content")
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        # Anthropic-style content blocks. Concatenate any text blocks.
+        text = " ".join(
+            b.get("text", "") for b in content if isinstance(b, dict)
+        )
+    else:
+        text = ""
+    if 5 <= gap <= 120 and any(
+        kw in text.lower() for kw in ("finished", "done", "are you", "still", "stuck")
+    ):
+        print(f"  ⚠  rec {i}: user asked a 'are-you-done' style follow-up {gap:.0f}s after the previous orchestrator message.")
+        print("     → may indicate the TUI's 'Thinking…' state didn't clear after the agent loop ended.")
+        print("     → investigate by inspecting `pendingHistoryItem` / `streamingState` lifecycle around rec {0}.".format(prev_gem[0]))
+
+# --- Last orchestrator message ----------------------------------------
 last_text = None
 for r in reversed(records):
     if r.get("type") == "gemini":
