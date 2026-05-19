@@ -11,15 +11,18 @@ resulting chat record. Upstream `gemini` 0.42 on your PATH stays untouched.
 
 ## One-time setup
 
-1. **Launcher.** `~/.local/bin/gemini-fork` is a bash wrapper that `exec`s
-   `node $REPO/bundle/gemini.js`. Created on initial harness setup; rebuilds
-   against the local dev bundle whenever you run `npm run build` (or pass
-   `GEMINI_FORK_BUILD=1`). Confirm it's on PATH:
+1. **Launchers.** Two bash wrappers at `~/.local/bin/`:
+   - `gemini-fork` — `exec`s the fork's `bundle/gemini.js`.
+   - `gemini-fork-harness` — `exec`s `test-harness/harness.sh` so you can drive
+     it from anywhere (e.g., from inside a freshly-created sandbox dir).
+
+   Confirm both on PATH:
 
    ```bash
    which gemini-fork              # → ~/.local/bin/gemini-fork
    gemini-fork --version          # → 0.44.x-nightly... (the fork)
    which gemini                   # → some upstream-managed path (0.42)
+   which gemini-fork-harness      # → ~/.local/bin/gemini-fork-harness
    ```
 
 2. **Build at least once.** From the repo root:
@@ -29,10 +32,13 @@ resulting chat record. Upstream `gemini` 0.42 on your PATH stays untouched.
    npm run build
    ```
 
+   The fork's bundle gets rebuilt by `npm run build`. Pass `GEMINI_FORK_BUILD=1`
+   to `gemini-fork` to rebuild on launch.
+
 3. **API key.** Swarm sub-agents need `ANTHROPIC_API_KEY`. The harness copies it
    from this repo's `.env` (one directory up from the repo root by default) into
    each sandbox automatically. If your key lives elsewhere, edit the sandbox's
-   `.env` after `harness.sh new` and before launching.
+   `.env` after `gemini-fork-harness new` and before launching.
 
 4. **Orchestrator auth.** Currently interactive OAuth — the fork's default.
    First `gemini-fork` invocation opens a browser for Google auth, then caches
@@ -42,8 +48,9 @@ resulting chat record. Upstream `gemini` 0.42 on your PATH stays untouched.
 ## Scenario run cycle
 
 ```bash
-# 1. Create a fresh sandbox for one scenario.
-test-harness/harness.sh new swarm-review
+# 1. Create a fresh sandbox for one scenario. (From anywhere — the
+#    global launcher works from any cwd.)
+gemini-fork-harness new swarm-review
 
 #    Prints the sandbox dir, e.g.
 #    ~/gemini-fork/sandboxes/swarm-review-20260519-023335/
@@ -60,11 +67,12 @@ gemini-fork
 
 # 5. Exit the session.
 
-# 6. Post-mortem the chat record.
-test-harness/harness.sh analyze latest
+# 6. Post-mortem the chat record. Still in the sandbox cwd? — the
+#    global launcher resolves the harness regardless of where you are.
+gemini-fork-harness analyze latest
 ```
 
-`harness.sh analyze` reads the matching gemini chat record from
+`gemini-fork-harness analyze` reads the matching gemini chat record from
 `~/.gemini/tmp/<project>/chats/<session>.jsonl` and prints:
 
 - Total record count
@@ -103,7 +111,7 @@ mkdir -p test-harness/scenarios/<name>/SEED
 # Write EXPECTED.md (regression checklist)
 ```
 
-Re-run `test-harness/harness.sh new <name>` to spin a sandbox. No code in the
+Re-run `gemini-fork-harness new <name>` to spin a sandbox. No code in the
 harness needs to change for new scenarios.
 
 ## Sandbox layout

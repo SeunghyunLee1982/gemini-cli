@@ -1,22 +1,31 @@
 #!/usr/bin/env bash
 # test-harness/harness.sh — driver for out-of-workspace swarm tests.
 #
+# Invoke either via the in-repo path (`./test-harness/harness.sh`) or via
+# the global launcher `gemini-fork-harness` (lives at
+# `~/.local/bin/gemini-fork-harness`, mirrors the `gemini-fork` pattern)
+# which just `exec`s this script. Use the global one from sandbox
+# directories where the repo isn't on the path.
+#
 # Subcommands:
-#   harness.sh new <scenario>      Create a fresh sandbox under
-#                                  ~/gemini-fork/sandboxes/<scenario>-<ts>/,
-#                                  seed it, print the invocation + prompt.
-#   harness.sh analyze <run_dir>   Walk the latest gemini chat record for
-#                                  that sandbox and dump swarm tool calls
-#                                  + results. Use `latest` as run_dir to
-#                                  pick the most recent sandbox.
-#   harness.sh list                Show past sandbox runs.
+#   gemini-fork-harness new <scenario>     Create a fresh sandbox under
+#                                          ~/gemini-fork/sandboxes/<scenario>-<ts>/,
+#                                          seed it, print the invocation
+#                                          + prompt.
+#   gemini-fork-harness analyze <run_dir>  Walk the latest gemini chat
+#                                          record for that sandbox and
+#                                          dump swarm tool calls + results.
+#                                          Use `latest` as run_dir to pick
+#                                          the most recent sandbox.
+#   gemini-fork-harness list               Show past sandbox runs.
 #
 # All scenarios live in test-harness/scenarios/<scenario>/.
 # Each has: SEED/ (copied into the sandbox), PROMPT.md (paste into the
 # interactive session), EXPECTED.md (what to look for in the chat record).
 #
 # The orchestrator runs interactively (OAuth path). After the session ends
-# the user runs `harness.sh analyze latest` to post-mortem the chat record.
+# the user runs `gemini-fork-harness analyze latest` to post-mortem the
+# chat record.
 
 set -euo pipefail
 
@@ -30,7 +39,7 @@ SCENARIO_ROOT="$HARNESS_DIR/scenarios"
 cmd_new() {
   local scenario="${1:-}"
   if [[ -z "$scenario" ]]; then
-    echo "usage: harness.sh new <scenario>" >&2
+    echo "usage: gemini-fork-harness new <scenario>" >&2
     echo "available scenarios:" >&2
     ls -1 "$SCENARIO_ROOT" >&2
     exit 1
@@ -124,7 +133,7 @@ EOF
   echo "  1. cd $run"
   echo "  2. gemini-fork              # interactive OAuth at first launch"
   echo "  3. paste prompt from PROMPT.md"
-  echo "  4. when done, exit and run: harness.sh analyze latest"
+  echo "  4. when done, exit and run: gemini-fork-harness analyze latest"
 }
 
 # ---------------------------------------------------------------------------
@@ -288,7 +297,7 @@ case "${1:-}" in
   analyze)   shift; cmd_analyze "$@" ;;
   list)      shift; cmd_list "$@" ;;
   ""|help|-h|--help)
-    sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     ;;
   *)
     echo "harness: unknown subcommand '$1'" >&2

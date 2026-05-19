@@ -6,16 +6,20 @@ primitive. Lets you spin up a clean sandbox (separate from this repo), launch
 
 ## Prerequisites (one-time)
 
-1. **Launcher.** `~/.local/bin/gemini-fork` exists and runs the latest
-   `bundle/gemini.js` from this repo. If missing, see the launcher script at
-   `~/.local/bin/gemini-fork`. (PATH must include `~/.local/bin`.)
+1. **Launchers.** Two bash wrappers at `~/.local/bin/`:
+   - `gemini-fork` runs the fork's `bundle/gemini.js`.
+   - `gemini-fork-harness` runs this script (so you can drive it from any cwd,
+     including a freshly-created sandbox).
+
+   Both depend on `~/.local/bin` being on PATH.
+
 2. **Build.** Run `npm run build` once after pulling new commits, or prepend
    `GEMINI_FORK_BUILD=1` to a single `gemini-fork` invocation to rebuild on
    launch.
 3. **API key.** The fork looks for a `.env` in the sandbox first.
-   `harness.sh new` copies `ANTHROPIC_API_KEY` from the fork's own `.env` (one
-   level above this repo) into each sandbox. If your key lives elsewhere,
-   override by editing the sandbox's `.env` before launching.
+   `gemini-fork-harness new` copies `ANTHROPIC_API_KEY` from the fork's own
+   `.env` (one level above this repo) into each sandbox. If your key lives
+   elsewhere, override by editing the sandbox's `.env` before launching.
 4. **Orchestrator auth.** Interactive OAuth (the fork's default). First launch
    will prompt for browser auth; subsequent launches reuse the cached token.
 
@@ -26,15 +30,15 @@ primitive. Lets you spin up a clean sandbox (separate from this repo), launch
 ls test-harness/scenarios/
 
 # 2. Spin up a fresh sandbox for one scenario
-test-harness/harness.sh new swarm-review
+gemini-fork-harness new swarm-review
 
 # 3. Run the interactive session from the sandbox dir
 cd ~/gemini-fork/sandboxes/swarm-review-<timestamp>/
 gemini-fork
 # (paste prompt from PROMPT.md, work through scenario, exit)
 
-# 4. Post-mortem the chat record
-~/gemini-fork/gemini-cli/test-harness/harness.sh analyze latest
+# 4. Post-mortem the chat record (still in the sandbox cwd is fine)
+gemini-fork-harness analyze latest
 ```
 
 `analyze latest` walks the most recent gemini chat record under
@@ -76,7 +80,7 @@ mkdir -p test-harness/scenarios/<name>/SEED
 
 ## Sandbox layout
 
-Each `harness.sh new <scenario>` creates:
+Each `gemini-fork-harness new <scenario>` creates:
 
 ```
 ~/gemini-fork/sandboxes/<scenario>-<YYYYMMDD-HHMMSS>/

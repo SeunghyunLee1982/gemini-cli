@@ -359,17 +359,19 @@ vitest mocks — use the out-of-workspace test harness at
 [`test-harness/`](./test-harness/). Human-facing walkthrough lives in
 [`TESTING.md`](./TESTING.md). Summary:
 
-- `~/.local/bin/gemini-fork` launcher runs this repo's `bundle/gemini.js` while
-  leaving the upstream `gemini` 0.42 on PATH alone.
-- `test-harness/harness.sh new <scenario>` creates a fresh sandbox at
+- `~/.local/bin/gemini-fork` runs this repo's `bundle/gemini.js`;
+  `~/.local/bin/gemini-fork-harness` runs `test-harness/harness.sh`. Both leave
+  upstream `gemini` 0.42 on PATH untouched.
+- `gemini-fork-harness new <scenario>` creates a fresh sandbox at
   `~/gemini-fork/sandboxes/<scenario>-<ts>/` with seed code,
   `.gemini/settings.json` (swarm enabled, OAuth), and `.env`
   (`ANTHROPIC_API_KEY` copied from the fork's parent `.env`).
 - User then `cd`s into the sandbox, runs `gemini-fork` interactively (OAuth
   orchestrator), pastes the prompt from `PROMPT.md`, exits.
-- `test-harness/harness.sh analyze latest` parses the matching chat record under
+- `gemini-fork-harness analyze latest` parses the matching chat record under
   `~/.gemini/tmp/<project>/chats/` and prints tool-call frequencies,
-  per-swarm-action summaries, and the final orchestrator message.
+  per-swarm-action summaries, and the final orchestrator message. Works from the
+  sandbox cwd — the global launcher resolves the harness path.
 
 Built-in scenarios: `swarm-review` (2-agent code review of seeded buggy TS,
 exercises Phase 5 spawn/message/release + Phase 6 `/audit`) and `policy-scope`
