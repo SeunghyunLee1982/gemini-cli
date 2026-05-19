@@ -49,12 +49,18 @@ I want you to review `user-service.ts` using a 2-agent swarm.
 
 4. **Send the second reviewer a turn** the same way.
 
-5. **Ask me to audit.** Slash commands like `/audit` are user-typed, not
-   orchestrator tool calls — you can't emit them. Instead, pause and tell me
-   which agent ID to audit (use whatever `swarm` returned in step 1, or call
-   `swarm_status` if you've lost it) and what to look for in the output. I'll
-   type `/audit <agent_id>` myself and paste the result back to you before you
-   continue.
+5. **STOP and ask me to run `/audit`.** Slash commands are typed by me, not by
+   you. Emitting `/audit sonnet-1` as text in your own response does NOT execute
+   it (it just shows up as a literal string on my screen). You must literally
+   pause: end your turn with a single question to me, like:
+
+   > "The sub-agents are still alive. Could you run `/audit sonnet-1` and paste
+   > the output? I'd like to see the effective policy and recent events before
+   > we proceed to step 6."
+
+   Then DO NOT call any more tools and DO NOT continue to step 6 until I reply.
+   In particular, the sub-agents must still be alive when I run `/audit`, so do
+   NOT release them before I answer.
 
 6. **Read both artifact files** using `read_file` and produce a synthesized
    final report with severity-ordered findings (don't just paste the agent

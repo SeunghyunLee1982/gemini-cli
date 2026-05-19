@@ -48,12 +48,17 @@ I want to test the swarm's policy-scoping feature with a doc-writer sub-agent.
    `calc.ts`. The agent should: read `calc.ts` (allowed), write `README.md`
    (allowed by the `.md$` rule), and succeed.
 
-3. **Ask me to audit the policy.** `/audit` is a user-typed slash command, not
-   an orchestrator tool call — so pause here and tell me to run
-   `/audit <agent_id>` myself. Explain what to look for: the 3 rules I passed
-   should appear with `subagent` matching this agent and
-   `source: swarm:<agent_id>:spawn`. I'll paste the audit output back before you
-   continue to step 4.
+3. **STOP and ask me to audit the policy.** `/audit` is typed by me, not by you
+   — emitting it as text in your own response does NOT execute it. Pause here:
+   end your turn with a single question, like:
+
+   > "Could you run `/audit doc-writer-1` and paste the output? I'd like to
+   > verify all three policy rules landed with `subagent: doc-writer-1` and
+   > `source: swarm:doc-writer-1:spawn` before we test the denial paths."
+
+   DO NOT call any more tools and DO NOT continue to step 4 until I reply with
+   the audit output. The agent must still be alive when I run `/audit`, so do
+   NOT release it before I answer.
 
 4. **Try to force a write_file violation.** Send the agent another `swarm`
    message asking it to also write a small `bench.ts` (NOT `.md`). The runtime

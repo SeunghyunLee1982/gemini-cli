@@ -321,6 +321,38 @@ if swarm_not_found:
     print("     → likely cause: bundle predates Phase 5, OR isSwarmEnabled() returned false at registration time.")
     print("     → fix: (cd $REPO && npm run bundle), then retest from a fresh sandbox.")
 
+# 1b. Anthropic 400 invalid_request_error — the Phase 5.1 drain only handles
+# the max_turns cap path. If a swarm sub-agent's response ended via
+# `max_tokens`, `pause_turn`, or another non-cap stop_reason with an
+# unpaired `tool_use`, the NEXT message to that agent fails with this
+# error. Each occurrence here is the same class of bug Phase 5.1 was
+# supposed to prevent — Phase 5.2 needs to extend drain to all exit paths.
+unpaired_tool_use = 0
+for i, r in enumerate(records):
+    for c in (r.get("toolCalls") or []):
+        if c.get("name") != "swarm":
+            continue
+        for fr in (c.get("result") or []) if isinstance(c.get("result"), list) else []:
+            if not isinstance(fr, dict):
+                continue
+            resp = fr.get("functionResponse", {}).get("response", {})
+            output = resp.get("output")
+            if isinstance(output, str):
+                try:
+                    parsed = json.loads(output)
+                    err = parsed.get("error", "") if isinstance(parsed, dict) else ""
+                    if isinstance(err, str) and "tool_use" in err and "tool_result" in err:
+                        unpaired_tool_use += 1
+                except json.JSONDecodeError:
+                    pass
+if unpaired_tool_use:
+    print(f"  ⚠  {unpaired_tool_use}× swarm `message` calls returned 400 `tool_use ... without tool_result`.")
+    print("     → Phase 5.1 drain-to-clean-state covers only the max_turns cap path.")
+    print("     → other Anthropic stop_reasons (max_tokens / pause_turn / default) can")
+    print("       still leave the sub-agent's `messages` history ending on an unpaired")
+    print("       `tool_use` block, which makes the next `message` call fail. Phase 5.2")
+    print("       extends the drain to every loop-exit branch in `anthropic-loop.ts`.")
+
 # 2. Recursive gemini invocations: shell calls that start with `gemini`
 #    or `gemini-fork`. Phase 8's tier-1 deny rule should catch these.
 recursive = 0
