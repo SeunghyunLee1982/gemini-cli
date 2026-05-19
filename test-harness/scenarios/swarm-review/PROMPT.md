@@ -49,10 +49,12 @@ I want you to review `user-service.ts` using a 2-agent swarm.
 
 4. **Send the second reviewer a turn** the same way.
 
-5. **Show me the audit.** Run the `/audit <agent_id>` slash command for the
-   first reviewer (use whatever ID `swarm` returned in step 1, or call
-   `swarm_status` if you've lost it) so I can see the effective policy. `/audit`
-   is a slash command, not a tool call — type it on its own line.
+5. **Ask me to audit.** Slash commands like `/audit` are user-typed, not
+   orchestrator tool calls — you can't emit them. Instead, pause and tell me
+   which agent ID to audit (use whatever `swarm` returned in step 1, or call
+   `swarm_status` if you've lost it) and what to look for in the output. I'll
+   type `/audit <agent_id>` myself and paste the result back to you before you
+   continue.
 
 6. **Read both artifact files** using `read_file` and produce a synthesized
    final report with severity-ordered findings (don't just paste the agent
